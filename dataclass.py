@@ -10,13 +10,13 @@ class MapDataset(torch.utils.data.Dataset):
         self.image_pairs = load_all_image_pairs()  # List or tensor of shape (num_maps, 2, channels, height, width)
         
         # Load start positions (starting frames or odometry)
-        self.start_positions = load_start_positions()  # Shape: (num_maps, ...)
+        self.start_positions = load_start_positions()  # Shape: (num_maps, 7)
         
         # Load goal positions (in camera frame)
-        self.goal_positions = load_goal_positions()  # Shape: (num_maps, ...)
+        self.goal_positions = load_goal_positions()  # Shape: (num_maps, 3)
 
         # Load odometry to grid transforms
-        self.t_odom_to_grid = load_odom_to_grid_transforms()  # Shape: (num_maps, 4, 4)
+        self.t_odom_to_grid = load_odom_to_grid_transforms()  # Shape: (num_maps, 7)
         
         # Any necessary transformations (e.g., normalization)
         self.transform = define_transforms()  
