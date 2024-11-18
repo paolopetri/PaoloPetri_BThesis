@@ -1,3 +1,6 @@
+import torch
+import torch.utils
+import torch.utils.data
 # Initialize the network, optimizer, and loss function
 network = initialize_network()
 optimizer = initialize_optimizer(network.parameters())
@@ -48,9 +51,11 @@ for epoch in range(num_epochs):
         optimizer.zero_grad()
         cost.backward()
         optimizer.step()
+    
 
-    # Optional: Validate the model, adjust learning rate, etc.
+    # Validate the model, adjust learning rate, etc.
     validate_model(network, validation_loader)
+    # TODO: Compare model to current best and save if better
 
 # Save the trained model
 save_model(network, save_path)

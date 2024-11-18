@@ -1,3 +1,7 @@
+import torch
+import torch.utils
+import torch.utils.data
+
 class MapDataset(torch.utils.data.Dataset):
     def _init_(self):
         # Load all grid maps into a tensor
@@ -21,11 +25,11 @@ class MapDataset(torch.utils.data.Dataset):
         # Any necessary transformations (e.g., normalization)
         self.transform = define_transforms()  
     
-    def _len_(self):
+    def __len__(self):
         # Returns the total number of samples
         return len(self.grid_maps)
     
-    def _getitem_(self, idx):
+    def __getitem__(self, idx):
         # Retrieve the grid map for the given index
         grid_map = self.grid_maps[idx]  # Shape: (266, 266)
 
