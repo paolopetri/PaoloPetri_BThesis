@@ -1,2 +1,7 @@
 data/
+TestData/
 old/
+*.log
+__pycache__/
+ruff.toml
+.ruff_cache/

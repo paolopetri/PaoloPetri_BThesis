@@ -1,6 +1,5 @@
 import torch
-import torch.utils
-import torch.utils.data
+from torch.utils.data import DataLoader
 # Initialize the network, optimizer, and loss function
 network = initialize_network()
 optimizer = initialize_optimizer(network.parameters())
@@ -8,7 +7,7 @@ loss_function = define_loss_function()
 
 # Create the dataset and DataLoader
 dataset = MapDataset()
-data_loader = torch.utils.data.DataLoader(
+data_loader = DataLoader(
     dataset,
     batch_size=batch_size,
     shuffle=True,
