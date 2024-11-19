@@ -56,7 +56,7 @@ class MapDataset(Dataset):
         self.start_pos_ori_SE3 = self.load_start_pos_ori_SE3()  # Shape: (num_maps, 7)
         
         # Load goal positions (in camera frame)
-        self.goal_positions = self.load_goal_positions()  # Shape: (num_maps,max_episodes, 3)
+        self.goal_positions = self.load_goal_positions(max_episodes)  # Shape: (num_maps,max_episodes, 3)
 
         # Load odometry to grid transforms
         self.t_odom_to_grid_SE3 = self.load_odom_to_grid_transforms_SE3()  # Shape: (num_maps, 7)
@@ -110,7 +110,7 @@ class MapDataset(Dataset):
         start_pos_ori_SE3 = self.start_pos_ori_SE3[idx]
         
         # Retrieve the goal position
-        goal_position = self.goal_positions[idx]
+        goal_positions = self.goal_positions[idx]
 
         # Retrieve the odometry to grid transform
         t_odom_to_grid_SE3 = self.t_odom_to_grid_SE3[idx]
@@ -121,7 +121,7 @@ class MapDataset(Dataset):
             'center_position': center_position,
             #'images': image_pair,
             'start_pos_ori_SE3': start_pos_ori_SE3,
-            'goal_position': goal_position,
+            'goal_positions': goal_positions,
             't_odom_to_grid_SE3': t_odom_to_grid_SE3
         }
         return sample
@@ -186,6 +186,18 @@ class MapDataset(Dataset):
         image_pairs = []
         depth_dir = os.path.join(self.data_root, 'depth')
         risk_dir = os.path.join(self.data_root, 'risk')
+            list: List containing tuples of (depth_image, risk_image) PIL Images.
+       
+        image_pairs = []
+        depth_dir = os.path.join(self.data_root, 'depth')
+        risk_dir = os.path.join(self.data_root, 'risk')
+        num_samples = len(self)  # Assuming the number of samples is determined by grid maps
+
+        for idx in range(num_samples):
+            depth_path = os.path.join(depth_dir, f'{idx}.png')
+            risk_path = os.path.join(risk_dir, f'{idx}.png')
+
+            depth_image = Image.open(depth_path).convert('RGB')
         num_samples = len(self)  # Assuming the number of samples is determined by grid maps
 
         for idx in range(num_samples):
@@ -227,7 +239,7 @@ class MapDataset(Dataset):
         return transformed_positions_SE3
 
 
-    def load_goal_positions(self, max_episodes=1):
+    def load_goal_positions(self, max_episodes):
         """
         Generates goal positions based on start positions and transforms them into the frame of the starting position.
 
