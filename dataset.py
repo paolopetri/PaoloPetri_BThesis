@@ -90,8 +90,8 @@ class MapDataset(Dataset):
                 - 't_odom_to_grid': Tensor of shape (7), odometry to grid transformation parameters.
         """
         # Retrieve the grid map for the given index
-        traversability_map = self.traversability_maps[idx]  # Shape: (266, 266)
-        risk_map = self.risk_maps[idx]                      # Shape: (266, 266)
+        traversability_map = self.traversability_maps[idx]  # Shape: (height), (width)
+        risk_map = self.risk_maps[idx]                      # Shape: (height), (width)
         
         # Stack the maps into a single tensor
         grid_map = torch.stack([traversability_map, risk_map], dim=0)  # Shape: (2, 266, 266)
@@ -241,7 +241,7 @@ class MapDataset(Dataset):
 
     def load_goal_positions(self, max_episodes):
         """
-        Generates goal positions based on start positions and transforms them into the frame of the starting position.
+        Generates goal positions based on start positions and transforms them into the camera frame.
 
         Args:
             max_episodes (int): Number of future positions to use as goals.
@@ -259,24 +259,15 @@ class MapDataset(Dataset):
         goal_offsets = torch.arange(1, max_episodes + 1, device=self.device).unsqueeze(0)  # Shape: [1, max_episodes]
 
         goal_indices = start_indices + goal_offsets  # Shape: [num_samples, max_episodes]
+
         # Clip goal_indices to num_samples - 1 to handle end cases
         goal_indices = torch.clamp(goal_indices, max=num_samples - 1)  # Shape: [num_samples, max_episodes]
 
-        # Debug: Print goal_indices
-        print(f"goal_indices shape: {goal_indices.shape}")
-        print(f"goal_indices: {goal_indices}")
-
         # Index into start_positions_SE3
         goal_positions_SE3 = start_positions_SE3[goal_indices.view(-1)]  # Shape: [num_samples * max_episodes, 7]
-        print(f"goal_positions_SE3 shape before view: {goal_positions_SE3.shape}")
 
-        try:
-            goal_positions_SE3 = goal_positions_SE3.view(num_samples, max_episodes, 7)  # Shape: [num_samples, max_episodes, 7]
-        except RuntimeError as e:
-            print(f"Error reshaping goal_positions_SE3: {e}")
-            print(f"num_samples: {num_samples}, max_episodes: {max_episodes}, total elements: {goal_positions_SE3.numel()}")
-            raise e
-
+        goal_positions_SE3 = goal_positions_SE3.view(num_samples, max_episodes, 7)  # Shape: [num_samples, max_episodes, 7]
+        
         # Compute inverse of start positions
         start_positions_SE3_inv = start_positions_SE3.Inv().unsqueeze(1)  # Shape: [num_samples, 1, 7]
 
@@ -288,9 +279,6 @@ class MapDataset(Dataset):
 
         # Extract positions (x, y, z) from transformed SE3 objects
         transformed_goal_positions = transformed_goal_SE3.translation()  # Shape: [num_samples, max_episodes, 3]
-
-        # Debug: Print transformed_goal_positions shape
-        print(f"transformed_goal_positions shape: {transformed_goal_positions.shape}")
 
         return transformed_goal_positions.to(self.device)
         
