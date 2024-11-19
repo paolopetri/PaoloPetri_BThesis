@@ -8,7 +8,7 @@ transformations using PyPose (pp), and prepares samples for training.
 
 Key functionalities include:
 - Loading traversability and risk grid maps and stacking them into a single tensor.
-- Loading grid positions, image pairs, start positions, goal positions, and odometry to grid transformations.
+- Loading center positions, image pairs, start positions, goal positions, and odometry to grid transformations.
 - Transforming start positions from the base link frame to the camera frame.
 - Generating goal positions based on future positions and transforming them into the frame of the starting position.
 """
@@ -29,7 +29,7 @@ class MapDataset(Dataset):
         Args:
             data_root (str): Path to the TrainingData folder.
             transform (callable, optional): Optional transform to be applied to images.
-            device (torch.device, optional): Device on which tensors will be allocated.
+            device (torch.device): Device on which tensors will be allocated.
             max_episodes (int): Maximum number of future positions to use as goals.
         """
 
@@ -46,7 +46,7 @@ class MapDataset(Dataset):
         # Load all grid maps into a tensor
         self.traversability_maps, self.risk_maps = self.load_all_grid_maps()  # Shape: (num_maps, 266, 266)
 
-        # Load grid positions in grid frame
+        # Load center positions in grid frame
         self.center_positions = self.load_center_positions()  # Shape: (num_maps, 2)
         
         # Load all image pairs into a list or tensor
@@ -227,7 +227,7 @@ class MapDataset(Dataset):
         start_positions_SE3 = pp.SE3(start_positions_tensor)  # Shape: [num_samples]
 
         # Define the static transform from base link to camera link frame
-        # Replace these values with the actual static transform values
+        # TODO: Replace these values with the actual static transform values
         t_base_to_cam_params = torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype=torch.float32, device=self.device)
         
         # Repeat the static transform for the entire batch
@@ -276,6 +276,7 @@ class MapDataset(Dataset):
 
         # Transform goal positions into the frame of the starting position
         transformed_goal_SE3 = start_positions_SE3_inv_expanded @ goal_positions_SE3  # Shape: [num_samples, max_episodes, 7]
+        #  TODO: Check if the correct transformation are used, i.e at the correct index on each of the max_episodes
 
         # Extract positions (x, y, z) from transformed SE3 objects
         transformed_goal_positions = transformed_goal_SE3.translation()  # Shape: [num_samples, max_episodes, 3]
@@ -290,19 +291,15 @@ class MapDataset(Dataset):
         Returns:
             pp.SE3: A batch of SE(3) transformations of shape [num_samples].
         """
-        # Construct the file path
         filepath = os.path.join(self.data_root, 'maps', 'odom_to_grid_transforms.txt')
         
-        # Load the transformations from the text file
         transforms = np.loadtxt(filepath, delimiter=',')  # Shape: (num_samples, 7)
         
-        # Convert the NumPy array to a PyTorch tensor
         transforms_tensor = torch.tensor(transforms, dtype=torch.float32, device=self.device)
         
         # Convert the tensor to pp.SE3 objects
         t_odom_to_grid_SE3 = pp.SE3(transforms_tensor)  # Shape: [num_samples]
         
-        # Return the SE(3) transformations
         return t_odom_to_grid_SE3
 
 

@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import traceback
 
-# Assuming MapDataset class is defined in map_dataset.py
 from dataset import MapDataset
 
 def main():
@@ -16,19 +15,19 @@ def main():
         dataset = MapDataset(
             data_root=data_root,
             transform=None,
-            device=torch.device('cuda'),  # Change to 'cuda' if using GPU
-            max_episodes=2  # Limit the number of episodes to load
+            device=torch.device('cuda'),
+            max_episodes=2 
         )
         print("MapDataset initialized successfully.")
     except Exception as e:
         print("Error initializing MapDataset:")
-        traceback.print_exc()  # Print the full stack trace
+        traceback.print_exc() 
         return
 
     # Check the length of the dataset
     print(f"Number of samples in the dataset: {len(dataset)}")
 
-    # Create a DataLoader for batch processing (optional)
+    # Create a DataLoader for batch processing
     dataloader = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=0)
 
     # Iterate over a few samples
