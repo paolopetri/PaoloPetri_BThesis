@@ -2,11 +2,8 @@ import torch
 import pypose as pp
 import torch.nn.functional as F
 
-import torch.nn.functional as F
-
-def CostofTraj(waypoints, goals, traversability_arrays, risk_arrays,
-               t_cam_to_odom_params, t_odom_to_grid_params,
-               length_x, length_y, center_xy, voxel_size, device,
+def CostofTraj(waypoints, goals, grid_maps, grid_idxs,
+               length_x, length_y, device,
                alpha=1, epsilon=1.0, delta=1, is_map=True):
     """
     Calculates the total cost of trajectories for a batch based on traversability, risk, and goal proximity.
@@ -14,14 +11,10 @@ def CostofTraj(waypoints, goals, traversability_arrays, risk_arrays,
     Args:
         waypoints (torch.Tensor): Waypoints in camera frame. Shape: [batch_size, num_waypoints, 3]
         goals (torch.Tensor): Goal positions in grid frame. Shape: [batch_size, 3]
-        traversability_arrays (torch.Tensor): Traversability maps. Shape: [batch_size, 1, H, W]
-        risk_arrays (torch.Tensor): Risk maps. Shape: [batch_size, 1, H, W]
-        t_cam_to_odom_params (torch.Tensor): Transformation parameters from camera to odometry frame. Shape: [batch_size, 7]
-        t_odom_to_grid_params (torch.Tensor): Transformation parameters from odometry to grid frame. Shape: [batch_size, 7]
+        grid_maps (torch.Tensor): Grid maps. Shape: [batch_size, 2, height, width]
+        grid_idxs (torch.Tensor): Grid indices for waypoints. Shape: [batch_size, num_waypoints, 2]
         length_x (int): Grid map length in x-dimension.
         length_y (int): Grid map length in y-dimension.
-        center_xy (torch.Tensor): Center coordinates. Shape: [batch_size, 2]
-        voxel_size (float): Size of each voxel in the map.
         device (torch.device): The device to perform computations on.
         alpha (float): Weight for traversability loss.
         epsilon (float): Weight for risk loss.
@@ -34,14 +27,8 @@ def CostofTraj(waypoints, goals, traversability_arrays, risk_arrays,
     batch_size, num_waypoints, _ = waypoints.shape
 
     if is_map:
-        # Transform waypoints to grid coordinates
-        grid_ps = TransformPoints(waypoints, t_cam_to_odom_params, t_odom_to_grid_params)
-
-        # Compute grid indices
-        grid_idxs = Pos2Ind(grid_ps, length_x, length_y, center_xy, voxel_size, device)
-
         # Normalize grid indices
-        grid = normalize_grid_indices(grid_idxs, length_x, length_y)
+        norm_grid_idxs = normalize_grid_indices(grid_idxs, length_x, length_y) 
 
         # Ensure grid_maps is on the correct device
         grid_maps = grid_maps.to(device)  # Shape: [batch_size, 2, height, width]
@@ -53,7 +40,7 @@ def CostofTraj(waypoints, goals, traversability_arrays, risk_arrays,
         # Perform grid sampling for traversability
         t_loss_M = F.grid_sample(
             traversability_arrays,
-            grid,
+            norm_grid_idxs,
             mode='nearest',
             padding_mode='border',
             align_corners=True
@@ -65,7 +52,7 @@ def CostofTraj(waypoints, goals, traversability_arrays, risk_arrays,
         # Perform grid sampling for risk
         r_loss_M = F.grid_sample(
             risk_arrays,
-            grid,
+            norm_grid_idxs,
             mode='nearest',
             padding_mode='border',
             align_corners=True
@@ -99,33 +86,27 @@ def CostofTraj(waypoints, goals, traversability_arrays, risk_arrays,
 
 
 
-def TransformPoints(waypoints, t_cam_to_odom_params, t_odom_to_grid_params):
+def TransformPoints2Grid(waypoints, t_cam_to_odom, t_odom_to_grid):
     """
     Transforms waypoints from camera frame to grid frame using pp.SE3 and batched data.
 
     Args:
         waypoints (torch.Tensor): Waypoints in camera frame. Shape: [batch_size, num_waypoints, 3]
-        t_cam_to_odom_params (torch.Tensor): Transformation parameters from camera to odometry frame. Shape: [batch_size, 7]
-        t_odom_to_grid_params (torch.Tensor): Transformation parameters from odometry to grid frame. Shape: [batch_size, 7]
+        t_cam_to_odom (torch.Tensor): Transformation from camera to odometry frame. Shape: [batch_size, 7]
+        t_odom_to_grid (torch.Tensor): Transformation from odometry to grid frame. Shape: [batch_size, 7]
 
     Returns:
         torch.Tensor: Transformed waypoints in grid frame. Shape: [batch_size, num_waypoints, 3]
     """
-
-    # Create SE3 transformations
-    t_cam_to_odom = pp.SE3(t_cam_to_odom_params)         # Shape: [batch_size]
-    t_odom_to_grid = pp.SE3(t_odom_to_grid_params)       # Shape: [batch_size]
-
-    # Convert waypoints to pp.Vector
-    waypoints_pp = pp.Vector(waypoints)                  # Shape: [batch_size, num_waypoints, 3]
+    batch_size, num_waypoints, _ = waypoints.shape
 
     # Transform waypoints from camera to odometry frame
-    waypoints_odom = t_cam_to_odom.unsqueeze(1) @ waypoints_pp  # Shape: [batch_size, num_waypoints, 3]
+    waypoints_odom = t_cam_to_odom @ waypoints  # Shape: [batch_size, num_waypoints, 3]
 
     # Transform waypoints from odometry to grid frame
-    waypoints_grid = t_odom_to_grid.unsqueeze(1) @ waypoints_odom  # Shape: [batch_size, num_waypoints, 3]
+    waypoints_grid = t_odom_to_grid @ waypoints_odom  # Shape: [batch_size, num_waypoints, 3]
 
-    return waypoints_grid.tensor  # Return as a tensor
+    return waypoints_grid  # Return as a tensor
 
 
 def normalize_grid_indices(grid_idxs, length_x, length_y):

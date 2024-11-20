@@ -235,7 +235,7 @@ class MapDataset(Dataset):
         
         # Apply the transformation to all start positions
         transformed_positions_SE3 = start_positions_SE3 @ t_base_to_cam_batch  # Shape: [num_samples]
-
+        
         return transformed_positions_SE3
 
 
