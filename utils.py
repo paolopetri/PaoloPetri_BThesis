@@ -1,5 +1,7 @@
 import torch
 import pypose as pp
+import matplotlib.pyplot as plt
+import numpy as np
 import torch.nn.functional as F
 
 def CostofTraj(waypoints, goals, grid_maps, grid_idxs,
@@ -98,7 +100,6 @@ def TransformPoints2Grid(waypoints, t_cam_to_odom, t_odom_to_grid):
     Returns:
         torch.Tensor: Transformed waypoints in grid frame. Shape: [batch_size, num_waypoints, 3]
     """
-    batch_size, num_waypoints, _ = waypoints.shape
 
     # Transform waypoints from camera to odometry frame
     waypoints_odom = t_cam_to_odom @ waypoints  # Shape: [batch_size, num_waypoints, 3]
@@ -154,20 +155,120 @@ def Pos2Ind(points, length_x, length_y, center_xy, voxel_size, device):
         torch.Tensor: Indices in the map array. Shape: [batch_size, num_points, 2]
     """
     # Calculate center indices (broadcasted over batch_size)
+    # TODO: Could add a batch dimention to center_xy to avoid broadcasting
     center_idx = torch.tensor([(length_x - 1) / 2, (length_y - 1) / 2], device=device)
     print(f"Center Indices: {center_idx}")
 
-    # Ensure points and center_xy are on the correct device
-    points = points.to(device)
-    center_xy = center_xy.to(device)
-
-    # Extract x and y coordinates (assuming points are at least 2D)
+    # Extract x and y coordinates
     points_xy = points[..., :2]  # Shape: [batch_size, num_points, 2]
 
     # Compute indices
     # center_xy is broadcasted over num_points
-    indices = center_idx + (center_xy.unsqueeze(1) - points_xy) / voxel_size
+    indices = center_idx + (center_xy - points_xy) / voxel_size
 
     return indices
 
+def plotting(start_idx, waypoints_idxs, goal_indx, grid_map):
+    """
+    Plots the Traversability Map and Risk Map side by side with the starting point, waypoints, and goal position.
 
+    Args:
+        start_idx (torch.Tensor): Starting index in the grid map of shape (batch_size, 2).
+        waypoints_idxs (torch.Tensor): Waypoints indices in the grid map of shape (batch_size, num_waypoints, 2).
+        goal_indx (torch.Tensor): Goal index in the grid map of shape (batch_size, 2).
+        grid_map (torch.Tensor): Grid map tensor of shape (batch_size, 2, height, width).
+    """
+
+    # Determine the number of samples in the batch
+    batch_size = grid_map.shape[0]
+
+    for i in range(batch_size):
+        # Extract traversability and risk maps for the current sample
+        traversability_map = grid_map[i, 0].cpu().numpy()  # Shape: [height, width]
+        risk_map = grid_map[i, 1].cpu().numpy()            # Shape: [height, width]
+
+        # Extract start, waypoints, and goal indices for the current sample
+        start = start_idx[i].cpu().numpy()          # Shape: [2] -> [x, y]
+        waypoints = waypoints_idxs[i].cpu().numpy() # Shape: [num_waypoints, 2] -> [[x1, y1], [x2, y2], ...]
+        goal = goal_indx[i].cpu().numpy()           # Shape: [2] -> [x, y]
+
+        # Extract x and y coordinates
+        start_x, start_y = start[0], start[1]
+        waypoints_x, waypoints_y = waypoints[:, 0], waypoints[:, 1]
+        goal_x, goal_y = goal[0], goal[1]
+
+        # Get grid dimensions
+        height, width = traversability_map.shape
+
+        # Clip indices to ensure they lie within the grid boundaries
+        start_x = np.clip(start_x, 0, height - 1)
+        start_y = np.clip(start_y, 0, width - 1)
+        waypoints_x = np.clip(waypoints_x, 0, height - 1)
+        waypoints_y = np.clip(waypoints_y, 0, width - 1)
+        goal_x = np.clip(goal_x, 0, height - 1)
+        goal_y = np.clip(goal_y, 0, width - 1)
+
+        # -----------------------------
+        # Create a Single Figure with Two Subplots
+        # -----------------------------
+        fig, axes = plt.subplots(1, 2, figsize=(16, 8))
+
+        # -----------------------
+        # Plot Traversability Map
+        # -----------------------
+        ax1 = axes[0]
+        # Adjust 'extent' to center the grid cells around their indices
+        ax1.imshow(traversability_map, cmap='gray', origin='upper', extent=[-0.5, width - 0.5, height - 0.5, -0.5])
+        # Plot start point
+        ax1.plot(start_y, start_x, 'go', markersize=10, label='Start')  # Green circle
+        # Plot waypoints line and individual markers
+        if waypoints_x.size > 0:
+            ax1.plot(waypoints_y, waypoints_x, 'b-', linewidth=2, label='Waypoints')  # Blue line
+            ax1.plot(waypoints_y, waypoints_x, 'bo', markersize=6)  # Blue circles for waypoints
+            # Add annotations for each waypoint
+            for wp_idx, (wp_x, wp_y) in enumerate(zip(waypoints_x, waypoints_y)):
+                ax1.text(wp_y + 0.1, wp_x + 0.1, f'WP{wp_idx+1}', color='blue', fontsize=9)
+        # Plot goal point
+        ax1.plot(goal_y, goal_x, 'ro', markersize=10, label='Goal')  # Red circle
+        # Title and labels
+        ax1.set_title(f'Sample {i+1} - Traversability Map')
+        ax1.set_xlabel('Y Index (Left to Right)')
+        ax1.set_ylabel('X Index (Top to Bottom)')
+        ax1.legend()
+        ax1.grid(False)
+        # Set limits to align with grid boundaries
+        ax1.set_xlim(-0.5, width - 0.5)
+        ax1.set_ylim(height - 0.5, -0.5)  # Inverted to have x increase from top to bottom
+
+        # -------------------
+        # Plot Risk Map
+        # -------------------
+        ax2 = axes[1]
+        # Adjust 'extent' similarly for risk map
+        ax2.imshow(risk_map, cmap='hot', origin='upper', extent=[-0.5, width - 0.5, height - 0.5, -0.5])
+        # Plot start point
+        ax2.plot(start_y, start_x, 'go', markersize=10, label='Start')  # Green circle
+        # Plot waypoints line and individual markers
+        if waypoints_x.size > 0:
+            ax2.plot(waypoints_y, waypoints_x, 'b-', linewidth=2, label='Waypoints')  # Blue line
+            ax2.plot(waypoints_y, waypoints_x, 'bo', markersize=6)  # Blue circles for waypoints
+            # Add annotations for each waypoint
+            for wp_idx, (wp_x, wp_y) in enumerate(zip(waypoints_x, waypoints_y)):
+                ax2.text(wp_y + 0.1, wp_x + 0.1, f'WP{wp_idx+1}', color='blue', fontsize=9)
+        # Plot goal point
+        ax2.plot(goal_y, goal_x, 'ro', markersize=10, label='Goal')  # Red circle
+        # Title and labels
+        ax2.set_title(f'Sample {i+1} - Risk Map')
+        ax2.set_xlabel('Y Index (Left to Right)')
+        ax2.set_ylabel('X Index (Top to Bottom)')
+        ax2.legend()
+        ax2.grid(False)
+        # Set limits to align with grid boundaries
+        ax2.set_xlim(-0.5, width - 0.5)
+        ax2.set_ylim(height - 0.5, -0.5)  # Inverted to have x increase from top to bottom
+
+        # Adjust layout for better spacing
+        plt.tight_layout()
+
+        # Display the combined figure
+        plt.show()
