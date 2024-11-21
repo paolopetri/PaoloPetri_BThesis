@@ -1,5 +1,4 @@
 data/
-TestData/
 old/
 *.log
 __pycache__/
