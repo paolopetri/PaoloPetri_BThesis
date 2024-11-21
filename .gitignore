@@ -1,4 +1,4 @@
-data/
+TrainingData/
 old/
 *.log
 __pycache__/

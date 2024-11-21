@@ -225,8 +225,8 @@ class MapDataset(Dataset):
 
         # Define the static transform from base link to camera link frame
         # TODO: Replace these values with the actual static transform values
-        t_base_to_cam_params = torch.tensor([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype=torch.float32, device=self.device) # Shape: [7]
-        
+        # t_base_to_cam_params = torch.tensor([-0.460, -0.002, 0.115, 0.544, 0.544, -0.453, -0.451], dtype=torch.float32, device=self.device) # Shape: [7]
+        t_base_to_cam_params = torch.tensor([0, 0, 0, 0, 0, 0, 1], dtype=torch.float32, device=self.device) # Shape: [7]
         # Repeat the static transform for the entire batch
         t_base_to_cam_batch = pp.SE3(t_base_to_cam_params.unsqueeze(0).repeat(start_positions_SE3.shape[0], 1))  # Shape: [num_samples, 7]
         
@@ -243,7 +243,6 @@ class MapDataset(Dataset):
         Returns:
             torch.Tensor: Transformed goal positions as a tensor of shape (num_samples, 3).
         """
-        import pypose as pp
 
         # Load start positions as SE(3) transformations
         start_pos_ori_SE3 = self.start_pos_ori_SE3  # Shape: [num_samples]
@@ -251,7 +250,7 @@ class MapDataset(Dataset):
         num_samples = start_pos_ori_SE3.shape[0]
 
         # Create indices for the next positions
-        goal_indices = torch.arange(num_samples, device=self.device) + 1  # Shape: [num_samples]
+        goal_indices = torch.arange(num_samples, device=self.device) + 30  # Shape: [num_samples]
         print(goal_indices)
 
         # Clip goal_indices to handle the last index (avoid out-of-bounds)
@@ -259,13 +258,14 @@ class MapDataset(Dataset):
         print(goal_indices)
 
         # Get goal positions as SE(3) transformations
-        goal_positions_SE3 = self.start_pos_ori_SE3[goal_indices]  # Shape: [num_samples]
+        goal_positions_SE3 = start_pos_ori_SE3[goal_indices]  # Shape: [num_samples]
+        goal_positions_SE3 = goal_positions_SE3.translation()  # Extract positions (x, y, z) from SE3 objects
 
         # Transform goal positions into the frame of the starting position
         transformed_goal_SE3 = start_pos_ori_SE3.Inv() @ goal_positions_SE3  # Shape: [num_samples]
 
         # Extract positions (x, y, z) from transformed SE3 objects
-        transformed_goal_positions = transformed_goal_SE3.translation()  # Shape: [num_samples, 3]
+        transformed_goal_positions = transformed_goal_SE3  # Shape: [num_samples, 3]
         print(transformed_goal_positions)
 
         return transformed_goal_positions.to(self.device)  # Shape: [num_samples, 3]

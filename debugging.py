@@ -9,7 +9,7 @@ from utils import CostofTraj, TransformPoints2Grid, Pos2Ind, plotting  # Adjust 
 
 def main(args):
     # Define the path to your debugging dataset
-    data_root = 'TestData'  # Replace with the actual path
+    data_root = 'TrainingData'  # Replace with the actual path
 
     # Initialize the MapDataset
     try:
@@ -28,10 +28,10 @@ def main(args):
     print(f"Number of samples in the dataset: {len(dataset)}")
 
     # Create a DataLoader for batch processing
-    dataloader = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=0)
+    # dataloader = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=0)
 
     # Iterate over a few samples
-    num_samples_to_check = 1
+    num_samples_to_check = 200
     for idx in range(num_samples_to_check):
         try:
             sample = dataset[idx]
@@ -94,7 +94,7 @@ def main(args):
             center_xy = center_position.unsqueeze(0)  # Shape: [1, 2]
 
             # Define voxel size
-            voxel_size = 1.0
+            voxel_size = 0.15
 
             length_x = height
             length_y = width
