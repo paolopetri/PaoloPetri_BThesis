@@ -40,7 +40,7 @@ def main(args):
             # Extract data from the sample
             grid_map = sample['grid_map']  # Shape: (2, height, width)
             center_position = sample['center_position']  # Shape: [2]
-            start_pos_ori_SE3 = sample['start_pos_ori_SE3']  # pp.SE3 object
+            t_cam_to_world_SE3 = sample['t_cam_to_world_SE3']  # pp.SE3 object
             goal_position = sample['goal_positions']  # Shape: [3]
             t_odom_to_grid_SE3 = sample['t_odom_to_grid_SE3']  # pp.SE3 object
 
@@ -53,7 +53,7 @@ def main(args):
             print(f"Center position: {center_position}")
 
             # Print start position SE3
-            print(f"Start position SE3 tensor: {start_pos_ori_SE3.tensor()}")
+            print(f"Start position SE3 tensor: {t_cam_to_world_SE3.tensor()}")
 
             # Print goal positions
             print(f"Goal positions: {goal_position}")
@@ -82,7 +82,7 @@ def main(args):
             print(f"Goal postion: {goal_position}")
 
             # Prepare transformation parameters
-            t_cam_to_odom_params = start_pos_ori_SE3.unsqueeze(0)
+            t_cam_to_odom_params = t_cam_to_world_SE3.unsqueeze(0)
             t_odom_to_grid_params = t_odom_to_grid_SE3.unsqueeze(0)  # Shape: [1, 7]
 
             print(f"t_cam_to_odom_params shape: {t_cam_to_odom_params.shape}")
