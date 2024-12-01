@@ -110,10 +110,11 @@ def main():
             goal_position = sample['goal_positions'].to(device)      # (batch, max_episodes, 3)
 
             # Forward pass
-            preds = model(depth_img, risk_img, goal_position)  # (batch, num_waypoints, 3)
+            preds, fear = model(depth_img, risk_img, goal_position)  # (batch, num_waypoints, 3)
             waypoints = traj_opt.TrajGeneratorFromPFreeRot(preds, step=0.1)  # (batch, num_waypoints, 3)
 
-            _, length_x, length_y = grid_map.shape
+
+            _, _, length_x, length_y = grid_map.shape
 
             transformed_waypoints = TransformPoints2Grid(waypoints, t_cam_to_world_SE3, t_odom_to_grid_SE3)  # (batch, num_waypoints, 3)
             grid_idxs = Pos2Ind(transformed_waypoints, length_x, length_y, center_position, voxel_size, device)  # (batch, num_waypoints)
@@ -121,7 +122,7 @@ def main():
             # Calculate the trajectory cost
             loss = CostofTraj(
                 waypoints=waypoints,
-                goals=goal_position,  # Assuming first goal as target
+                goals=goal_position,
                 grid_maps=grid_map,
                 grid_idxs=grid_idxs,
                 length_x=length_x,
@@ -161,14 +162,18 @@ def main():
                 center_position = sample['center_position'].to(device)  # (batch, 2)
                 t_odom_to_grid_SE3 = sample['t_odom_to_grid_SE3'].to(device)  # (batch, 7)
                 t_cam_to_world_SE3 = sample['t_cam_to_world_SE3'].to(device)  # (batch, 7)
-                images = sample['images'].to(device)                    # (batch, 2, 3, 360, 640)
+                depth_img, risk_img = sample['image_pair']              
+                depth_img = depth_img.to(device)
+                risk_img = risk_img.to(device)                
                 goal_position = sample['goal_positions'].to(device)      # (batch, max_episodes, 3)
 
-                # Forward pass
-                preds = model(images, goal_position)  # (batch, num_waypoints, 3)
-                waypoints = traj_opt.TrajGeneratorFromPFreeRot(preds, step=0.1)  # (batch, num_waypoints, 3)
 
-                _, length_x, length_y = grid_map.shape
+                # Forward pass
+                preds, fear = model(depth_img, risk_img, goal_position)  # (batch, num_waypoints, 3)
+                waypoints = traj_opt.TrajGeneratorFromPFreeRot(preds, step=0.1)  # (batch, num_waypoints, 3)
+                waypoints = waypoints.to(device)
+
+                _, _, length_x, length_y = grid_map.shape
 
                 transformed_waypoints = TransformPoints2Grid(waypoints, t_cam_to_world_SE3, t_odom_to_grid_SE3)  # (batch, num_waypoints, 3)
                 grid_idxs = Pos2Ind(transformed_waypoints, length_x, length_y, center_position, voxel_size, device)  # (batch, num_waypoints)

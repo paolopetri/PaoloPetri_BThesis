@@ -15,13 +15,17 @@ import torch.nn as nn
 class PlannerNet(nn.Module):
     def __init__(self, encoder_channel=64, k=5):
         super().__init__()
-        self.encoder = PerceptNet(layers=[2, 2, 2, 2])
-        self.decoder = Decoder(512, encoder_channel, k)
+        self.encoder1 = PerceptNet(layers=[2, 2, 2, 2], in_channels=3)
+        self.encoder2 = PerceptNet(layers=[2, 2, 2, 2], in_channels=3)
+        self.decoder = Decoder(1024, encoder_channel, k)
 
-    def forward(self, x, risk, goal):
-        x = self.encoder(x, risk)
+    def forward(self, depth, risk, goal):
+        risk = self.encoder1(risk)
+        depth = self.encoder2(depth)
+        x = torch.cat((depth, risk), dim=1)
         x, c = self.decoder(x, goal)
         return x, c
+
 
 class Decoder(nn.Module):
     def __init__(self, in_channels, goal_channels, k=5):
@@ -32,7 +36,7 @@ class Decoder(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
         self.conv1 = nn.Conv2d((in_channels + goal_channels), 512, kernel_size=5, stride=1, padding=1)
-        self.conv2 = nn.Conv2d(512, 256, kernel_size=3, stride=1, padding=0)
+        self.conv2 = nn.Conv2d(512, 256, kernel_size=3, stride=1, padding=0);
 
         self.fc1   = nn.Linear(256 * 128, 1024) 
         self.fc2   = nn.Linear(1024, 512)

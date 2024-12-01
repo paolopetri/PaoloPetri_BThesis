@@ -88,26 +88,37 @@ def CostofTraj(waypoints, goals, grid_maps, grid_idxs,
 
 
 
-def TransformPoints2Grid(waypoints, t_cam_to_odom, t_odom_to_grid):
+def TransformPoints2Grid(waypoints, t_cam_to_world_tensor, t_world_to_grid_tensor):
     """
     Transforms waypoints from camera frame to grid frame using pp.SE3 and batched data.
 
     Args:
         waypoints (torch.Tensor): Waypoints in camera frame. Shape: [batch_size, num_waypoints, 3]
-        t_cam_to_odom (torch.Tensor): Transformation from camera to odometry frame. Shape: [batch_size, 7]
-        t_odom_to_grid (torch.Tensor): Transformation from odometry to grid frame. Shape: [batch_size, 7]
+        t_cam_to_world_tensor (torch.Tensor): Transformation from camera to world frame. Shape: [batch_size, 7]
+        t_world_to_grid_tensor (torch.Tensor): Transformation from world to grid frame. Shape: [batch_size, 7]
 
     Returns:
         torch.Tensor: Transformed waypoints in grid frame. Shape: [batch_size, num_waypoints, 3]
     """
 
-    # Transform waypoints from camera to odometry frame
-    waypoints_odom = t_cam_to_odom @ waypoints  # Shape: [batch_size, num_waypoints, 3]
+    # Recreate pp.SE3 objects from tensors
 
-    # Transform waypoints from odometry to grid frame
-    waypoints_grid = t_odom_to_grid @ waypoints_odom  # Shape: [batch_size, num_waypoints, 3]
+    batch_size, num_waypoints, _ = waypoints.shape
 
-    return waypoints_grid  # Return as a tensor
+    world_wp = pp.identity_SE3(batch_size, num_waypoints, device = waypoints.device, requires_grad = waypoints.requires_grad)
+    world_wp.tensor()[:, :, 0:3] = waypoints
+
+    t_cam_to_world = pp.SE3(t_cam_to_world_tensor)
+    t_world_to_grid = pp.SE3(t_world_to_grid_tensor).Inv()
+
+    # Apply the transformations using .Act()
+    waypoints_world = t_cam_to_world[:, None, :] @ world_wp  # Shape: [batch_size, num_waypoints, 3]
+
+    # Transform waypoints from world to grid frame
+    waypoints_grid = t_world_to_grid[:, None, :] @ waypoints_world  # Shape: [batch_size, num_waypoints, 3]
+
+    return waypoints_grid.tensor()[:, :, 0:3]
+
 
 
 def normalize_grid_indices(grid_idxs, length_x, length_y):
@@ -156,16 +167,19 @@ def Pos2Ind(points, length_x, length_y, center_xy, voxel_size, device):
     """
     # Calculate center indices (broadcasted over batch_size)
     # TODO: Could add a batch dimention to center_xy to avoid broadcasting
-    center_idx = torch.tensor([(length_x - 1) / 2, (length_y - 1) / 2], device=device)
-    print(f"Center Indices: {center_idx}")
+    print(f"Center_xy shape: {center_xy.shape}")
+    print(f"points shape: {points.shape}")
+    
+    center_idx = torch.tensor([(length_x - 1) / 2, (length_y - 1) / 2], device=device).view(1, 1, 2)
 
     # Extract x and y coordinates
     points_xy = points[..., :2]  # Shape: [batch_size, num_points, 2]
 
+    center_xy = center_xy.unsqueeze(1)  # Shape: [batch_size, 1, 2]
     # Compute indices
     # center_xy is broadcasted over num_points
     indices = center_idx + (center_xy - points_xy) / voxel_size
-
+    print(f"Indices: {indices}")
     return indices
 
 def plotting(start_idx, waypoints_idxs, goal_indx, grid_map):

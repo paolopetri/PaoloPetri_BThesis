@@ -7,7 +7,6 @@
 # LICENSE file in the root directory of this source tree.
 # ======================================================================
 
-import torch
 import torch.nn as nn
 
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
@@ -29,8 +28,8 @@ class BasicBlock(nn.Module):
         super(BasicBlock, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
-        # if groups != 1 or base_width != 64:
-        #     raise ValueError('BasicBlock only supports groups=1 and base_width=64')
+        if groups != 1 or base_width != 64:
+            raise ValueError('BasicBlock only supports groups=1 and base_width=64')
         if dilation > 1:
             raise NotImplementedError("Dilation > 1 not supported in BasicBlock")
         # Both self.conv1 and self.downsample layers downsample the input when stride != 1
@@ -59,8 +58,8 @@ class BasicBlock(nn.Module):
 
 class PerceptNet(nn.Module):
 
-    def __init__(self, layers, block=BasicBlock, groups=1, 
-                 width_per_group=128, replace_stride_with_dilation=None, norm_layer=None):
+    def __init__(self, layers, in_channels=3, block=BasicBlock, groups=1, 
+                 width_per_group=64, replace_stride_with_dilation=None, norm_layer=None):
                  
         super(PerceptNet, self).__init__()
         if norm_layer is None:
@@ -78,11 +77,11 @@ class PerceptNet(nn.Module):
                              "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
         self.groups = groups
         self.base_width = width_per_group
-        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3,
+        self.conv1 = nn.Conv2d(in_channels, self.inplanes, kernel_size=7, stride=2, padding=3,
                                bias=False)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block,128, layers[0]) # original 64
+        self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2,
                                        dilate=replace_stride_with_dilation[0])
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2,
@@ -122,17 +121,10 @@ class PerceptNet(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def _forward_impl(self, x, risk):
+    def _forward_impl(self, x):
         x = self.conv1(x)
-        risk = self.conv1(risk)
         x = self.relu(x)
-        risk = self.relu(risk)
-
         x = self.maxpool(x)
-        risk = self.maxpool(risk)
-        
-        x = torch.cat((x, risk), dim=1)
-        print(x.shape)
 
         x = self.layer1(x)
         x = self.layer2(x)
@@ -141,5 +133,5 @@ class PerceptNet(nn.Module):
 
         return x
 
-    def forward(self, x, risk):
-        return self._forward_impl(x, risk)
+    def forward(self, x):
+        return self._forward_impl(x)

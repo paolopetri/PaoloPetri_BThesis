@@ -31,11 +31,12 @@ def main(args):
     # dataloader = DataLoader(dataset, batch_size=1, shuffle=True, num_workers=0)
 
     # Iterate over a few samples
-    num_samples_to_check = 200
+    num_samples_to_check = 1000
     for idx in range(num_samples_to_check):
         try:
-            sample = dataset[idx]
-            print(f"\nSample index: {idx}")
+            offset = 500
+            sample = dataset[idx + offset]
+            print(f"\nSample index: {idx + offset}")
 
             # Extract data from the sample
             grid_map = sample['grid_map']  # Shape: (2, height, width)
@@ -53,13 +54,13 @@ def main(args):
             print(f"Center position: {center_position}")
 
             # Print start position SE3
-            print(f"Start position SE3 tensor: {t_cam_to_world_SE3.tensor()}")
+            print(f"Start position SE3 tensor: {t_cam_to_world_SE3}")
 
             # Print goal positions
             print(f"Goal positions: {goal_position}")
 
             # Print odometry to grid transform SE3
-            print(f"Odometry to grid SE3 tensor: {t_odom_to_grid_SE3.tensor()}")
+            print(f"Odometry to grid SE3 tensor: {t_odom_to_grid_SE3}")
 
             # Generate waypoints between start and goal positions
             num_waypoints = 3
@@ -98,7 +99,11 @@ def main(args):
 
             length_x = height
             length_y = width
-            
+            # For hardcoded waypoints
+            print("Hardcoded waypoints type:", type(waypoints))
+            print("Hardcoded waypoints dtype:", waypoints.dtype)
+            print("Hardcoded waypoints shape:", waypoints.shape)
+                        
             # Transform waypoints to grid coordinates
             transformed_waypoints = TransformPoints2Grid(waypoints, t_cam_to_odom_params, t_odom_to_grid_params)  # Shape: [1, num_waypoints, 3]
             print(f"Transformed waypoints to grid: {transformed_waypoints}")
