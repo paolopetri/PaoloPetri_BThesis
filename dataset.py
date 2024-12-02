@@ -43,11 +43,6 @@ class MapDataset(Dataset):
       
         self.device = device if device is not None else torch.device('cpu')
     
-        # Load all data
-       
-        # Load all grid maps into a tensor
-        self.traversability_maps, self.risk_maps = self.load_all_grid_maps()  # Shape: (num_maps, 266, 266)
-
         # Load center positions in grid frame
         self.center_positions = self.load_center_positions()  # Shape: (num_maps, 2)
         
@@ -59,8 +54,6 @@ class MapDataset(Dataset):
 
         # Load odometry to grid transforms
         self.t_odom_to_grid_SE3 = self.load_odom_to_grid_transforms_SE3()  # Shape: (num_maps, 7)
-        print("Type of t_cam_to_world after assignment:", type(self.t_cam_to_world_SE3))
-        print("Type of t_odom_to_grid after assignment:", type(self.t_odom_to_grid_SE3))
 
         
     def __len__(self):
@@ -70,7 +63,7 @@ class MapDataset(Dataset):
         Returns:
             int: Total number of samples.
         """
-        return len(self.traversability_maps)
+        return len(self.center_positions)
     
     def __getitem__(self, idx):
         """
@@ -89,8 +82,7 @@ class MapDataset(Dataset):
                 - 't_odom_to_grid': Tensor of shape (7), odometry to grid transformation parameters.
         """
         # Retrieve the grid map for the given index
-        traversability_map = self.traversability_maps[idx]  # Shape: (height), (width)
-        risk_map = self.risk_maps[idx]                      # Shape: (height), (width)
+        traversability_map, risk_map = self.load_grid_map(idx)  # Shape: (height), (width)
         
         # Stack the maps into a single tensor
         grid_map = torch.stack([traversability_map, risk_map], dim=0)  # Shape: (2, 266, 266)
@@ -129,43 +121,29 @@ class MapDataset(Dataset):
         }
         return sample
     
-    def load_all_grid_maps(self):
+    def load_grid_map(self, idx):
         """
-        Loads all traversability and risk grid maps into tensors.
+        Loads traversability and risk grid map into tensors.
 
         Returns:
             tuple:
                 - traversability_maps (torch.Tensor): Tensor of shape (num_samples, height, width).
                 - risk_maps (torch.Tensor): Tensor of shape (num_samples, height, width).
         """
-        traversability_maps = []
-        risk_maps = []
 
         traversability_dir = os.path.join(self.data_root, 'maps', 'traversability')
         risk_dir = os.path.join(self.data_root, 'maps', 'risk')
 
-        traversability_files = sorted(os.listdir(traversability_dir))
-        risk_files = sorted(os.listdir(risk_dir))
+        traversability_file = os.path.join(traversability_dir, f'{idx}.txt')
+        risk_file = os.path.join(risk_dir, f'{idx}.txt')
 
-        for t_file, r_file in zip(traversability_files, risk_files):
-            if t_file.endswith('.txt') and r_file.endswith('.txt'):
-                # Load traversability map
-                t_filepath = os.path.join(traversability_dir, t_file)
-                traversability_map = np.loadtxt(t_filepath, delimiter=',').T
-                traversability_tensor = torch.tensor(traversability_map, dtype=torch.float32, device=self.device)
-                traversability_maps.append(traversability_tensor)
+        traversability_map = np.loadtxt(traversability_file, delimiter=',').T
+        traversability_tensor = torch.tensor(traversability_map, dtype=torch.float32, device=self.device)
+        
+        risk_map = np.loadtxt(risk_file, delimiter=',').T
+        risk_tensor = torch.tensor(risk_map, dtype=torch.float32, device=self.device)
 
-                # Load risk map
-                r_filepath = os.path.join(risk_dir, r_file)
-                risk_map = np.loadtxt(r_filepath, delimiter=',').T
-                risk_tensor = torch.tensor(risk_map, dtype=torch.float32, device=self.device)
-                risk_maps.append(risk_tensor)
-
-        # Stack the lists into tensors
-        traversability_maps = torch.stack(traversability_maps)  # Shape: (num_samples, height, width)
-        risk_maps = torch.stack(risk_maps)                      # Shape: (num_samples, height, width)
-
-        return traversability_maps, risk_maps
+        return traversability_tensor, risk_tensor
     
     def load_center_positions(self):
         """
@@ -176,8 +154,11 @@ class MapDataset(Dataset):
             torch.Tensor: Tensor of shape (num_samples, 2).
         """
         filepath = os.path.join(self.data_root,'maps', 'center_positions.txt')
+
         center_positions = np.loadtxt(filepath, delimiter=',')
+        
         center_positions_tensor = torch.tensor(center_positions, dtype=torch.float32, device=self.device) 
+        
         return center_positions_tensor
 
     def load_image_pair(self, idx):
@@ -219,16 +200,13 @@ class MapDataset(Dataset):
         t_base_to_world_SE3 = pp.SE3(t_base_to_world_tensor)  # Shape: [num_samples, 7]
 
         # Define the static transform from camera link to base link frame
-        # TODO: Replace these values with the actual static transform values
         # t_cam_to_base = torch.tensor([0.001, 0.197, -0.432, 0.544, 0.544, -0.453, 0.451], dtype=torch.float32, device=self.device) # Shape: [7]
         t_cam_to_base = torch.tensor([0, 0, 0, 0, 0, 0, 1], dtype=torch.float32, device=self.device) # Shape: [7] # Identity transform
         # Repeat the static transform for the entire batch
         t_cam_to_base_batch = pp.SE3(t_cam_to_base.unsqueeze(0).repeat(t_base_to_world.shape[0], 1))  # Shape: [num_samples, 7]
-        
 
         # Apply the transformation to all start positions
         t_cam_to_world_SE3 = t_base_to_world_SE3 @ t_cam_to_base_batch  # Shape: [num_samples, 7]
-        print(f"Type of result in load_t_cam_to_world_SE3: {type(t_cam_to_world_SE3)}")
 
         return t_cam_to_world_SE3
 
@@ -278,10 +256,7 @@ class MapDataset(Dataset):
         
         transforms_tensor = torch.tensor(transforms, dtype=torch.float32, device=self.device)
         
-        # Convert the tensor to pp.SE3 objects
         t_odom_to_grid_SE3 = pp.SE3(transforms_tensor)  # Shape: [num_samples]
-
-        print("Type of t_odom_to_grid_SE3 in load_odom_to_grid_transforms_SE3:", type(t_odom_to_grid_SE3))
         
         return t_odom_to_grid_SE3
 

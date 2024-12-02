@@ -9,7 +9,7 @@ from utils import CostofTraj, TransformPoints2Grid, Pos2Ind, plotting  # Adjust 
 
 def main(args):
     # Define the path to your debugging dataset
-    data_root = 'TrainingData'  # Replace with the actual path
+    data_root = 'DebuggingData'  # Replace with the actual path
 
     # Initialize the MapDataset
     try:
@@ -34,7 +34,7 @@ def main(args):
     num_samples_to_check = 1000
     for idx in range(num_samples_to_check):
         try:
-            offset = 500
+            offset = 400
             sample = dataset[idx + offset]
             print(f"\nSample index: {idx + offset}")
 
@@ -128,15 +128,18 @@ def main(args):
 
             print(f"Total cost: {total_cost.item()}")
 
-            transformed_start = TransformPoints2Grid(start_position.unsqueeze(0), t_cam_to_odom_params, t_odom_to_grid_params)  # Shape: [1, 3]
+            transformed_start = TransformPoints2Grid(start_position.unsqueeze(0).unsqueeze(0), t_cam_to_odom_params, t_odom_to_grid_params)  # Shape: [1, 3]
             print(f"Transformed start position: {transformed_start}")
             start_idx = Pos2Ind(transformed_start, length_x, length_y, center_xy, voxel_size, device)
             print(f"Start index: {start_idx}")
-            transformed_goal = TransformPoints2Grid(goal, t_cam_to_odom_params, t_odom_to_grid_params)  # Shape: [1, 3]
+            transformed_goal = TransformPoints2Grid(goal.unsqueeze(0), t_cam_to_odom_params, t_odom_to_grid_params)  # Shape: [1, 3]
             print(f"Transformed goal position: {transformed_goal}")
             goal_indx = Pos2Ind(transformed_goal, length_x, length_y, center_xy, voxel_size, device)
             print(f"Goal index: {goal_indx}")
             print(f"Waypoints indices: {waypoints_idxs}")
+
+            start_idx = start_idx.squeeze(1)
+            goal_indx = goal_indx.squeeze(1)
 
 
 

@@ -196,6 +196,10 @@ def main():
                 val_loss += loss.item()
                 val_bar.set_postfix(loss=loss.item())
 
+                # Plot the waypoints and trajectory
+
+                
+
         # Calculate average validation loss for the epoch
         avg_val_loss = val_loss / len(val_loader)
         wandb.log({"epoch": epoch+1, "validation_loss": avg_val_loss})

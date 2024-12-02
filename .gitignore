@@ -1,7 +1,10 @@
 TrainingData/
+DebuggingData/
 old/
 *.log
 __pycache__/
 ruff.toml
 .ruff_cache/
 wandb/
+TrainingDataCAMGRID/
+DebuggingDataCAMGRID/
