@@ -102,8 +102,7 @@ def main():
             # Move data to GPU
             grid_map = sample['grid_map'].to(device)                # (batch, 2, 266, 266)
             center_position = sample['center_position'].to(device)  # (batch, 2)
-            t_odom_to_grid_SE3 = sample['t_odom_to_grid_SE3'].to(device)  # (batch, 7)
-            t_cam_to_world_SE3 = sample['t_cam_to_world_SE3'].to(device)  # (batch, 7)
+            t_grid_to_cam_SE3= sample['t_grid_to_cam_SE3'].to(device)  # (batch, 7)
             depth_img, risk_img = sample['image_pair']              
             depth_img = depth_img.to(device)
             risk_img = risk_img.to(device)                
@@ -116,7 +115,7 @@ def main():
 
             _, _, length_x, length_y = grid_map.shape
 
-            transformed_waypoints = TransformPoints2Grid(waypoints, t_cam_to_world_SE3, t_odom_to_grid_SE3)  # (batch, num_waypoints, 3)
+            transformed_waypoints = TransformPoints2Grid(waypoints, t_grid_to_cam_SE3)  # (batch, num_waypoints, 3)
             grid_idxs = Pos2Ind(transformed_waypoints, length_x, length_y, center_position, voxel_size, device)  # (batch, num_waypoints)
 
             # Calculate the trajectory cost
@@ -160,8 +159,7 @@ def main():
                 # Move data to GPU
                 grid_map = sample['grid_map'].to(device)                # (batch, 2, 266, 266)
                 center_position = sample['center_position'].to(device)  # (batch, 2)
-                t_odom_to_grid_SE3 = sample['t_odom_to_grid_SE3'].to(device)  # (batch, 7)
-                t_cam_to_world_SE3 = sample['t_cam_to_world_SE3'].to(device)  # (batch, 7)
+                t_grid_to_cam_SE3 = sample['t_grid_to_cam_SE3'].to(device)  # (batch, 7)
                 depth_img, risk_img = sample['image_pair']              
                 depth_img = depth_img.to(device)
                 risk_img = risk_img.to(device)                
@@ -175,7 +173,7 @@ def main():
 
                 _, _, length_x, length_y = grid_map.shape
 
-                transformed_waypoints = TransformPoints2Grid(waypoints, t_cam_to_world_SE3, t_odom_to_grid_SE3)  # (batch, num_waypoints, 3)
+                transformed_waypoints = TransformPoints2Grid(waypoints, t_grid_to_cam_SE3)  # (batch, num_waypoints, 3)
                 grid_idxs = Pos2Ind(transformed_waypoints, length_x, length_y, center_position, voxel_size, device)  # (batch, num_waypoints)
 
                 # Calculate the trajectory cost

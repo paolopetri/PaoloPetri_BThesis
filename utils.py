@@ -88,7 +88,7 @@ def CostofTraj(waypoints, goals, grid_maps, grid_idxs,
 
 
 
-def TransformPoints2Grid(waypoints, t_cam_to_world_tensor, t_world_to_grid_tensor):
+def TransformPoints2Grid(waypoints, t_grid_to_cam_tensor):
     """
     Transforms waypoints from camera frame to grid frame using pp.SE3 and batched data.
 
@@ -108,16 +108,12 @@ def TransformPoints2Grid(waypoints, t_cam_to_world_tensor, t_world_to_grid_tenso
     world_wp = pp.identity_SE3(batch_size, num_waypoints, device = waypoints.device, requires_grad = waypoints.requires_grad)
     world_wp.tensor()[:, :, 0:3] = waypoints
 
-    t_cam_to_world = pp.SE3(t_cam_to_world_tensor)
-    t_world_to_grid = pp.SE3(t_world_to_grid_tensor).Inv()
-
-    # Apply the transformations using .Act()
-    waypoints_world = t_cam_to_world[:, None, :] @ world_wp  # Shape: [batch_size, num_waypoints, 3]
+    t_grid_to_cam_SE3 = pp.SE3(t_grid_to_cam_tensor)
 
     # Transform waypoints from world to grid frame
-    waypoints_grid = t_world_to_grid[:, None, :] @ waypoints_world  # Shape: [batch_size, num_waypoints, 3]
+    grid_wp = t_grid_to_cam_SE3[:, None, :] @ world_wp  # Shape: [batch_size, num_waypoints, 3]
 
-    return waypoints_grid.tensor()[:, :, 0:3]
+    return grid_wp.tensor()[:, :, 0:3]
 
 
 
@@ -167,9 +163,7 @@ def Pos2Ind(points, length_x, length_y, center_xy, voxel_size, device):
     """
     # Calculate center indices (broadcasted over batch_size)
     # TODO: Could add a batch dimention to center_xy to avoid broadcasting
-    print(f"Center_xy shape: {center_xy.shape}")
-    print(f"points shape: {points.shape}")
-    
+        
     center_idx = torch.tensor([(length_x - 1) / 2, (length_y - 1) / 2], device=device).view(1, 1, 2)
 
     # Extract x and y coordinates
@@ -179,10 +173,9 @@ def Pos2Ind(points, length_x, length_y, center_xy, voxel_size, device):
     # Compute indices
     # center_xy is broadcasted over num_points
     indices = center_idx + (center_xy - points_xy) / voxel_size
-    print(f"Indices: {indices}")
     return indices
 
-def plotting(start_idx, waypoints_idxs, goal_indx, grid_map):
+def plotting_old(start_idx, waypoints_idxs, goal_indx, grid_map):
     """
     Plots the Traversability Map and Risk Map side by side with the starting point, waypoints, and goal position.
 
@@ -205,7 +198,9 @@ def plotting(start_idx, waypoints_idxs, goal_indx, grid_map):
         start = start_idx[i].cpu().numpy()          # Shape: [2] -> [x, y]
         waypoints = waypoints_idxs[i].cpu().numpy() # Shape: [num_waypoints, 2] -> [[x1, y1], [x2, y2], ...]
         goal = goal_indx[i].cpu().numpy()           # Shape: [2] -> [x, y]
-
+        print(f"Start: {start}")
+        print(f"Start type: {type(start)}")
+        print(f"Start shape: {start.shape}")
         # Extract x and y coordinates
         start_x, start_y = start[0], start[1]
         waypoints_x, waypoints_y = waypoints[:, 0], waypoints[:, 1]
@@ -232,7 +227,7 @@ def plotting(start_idx, waypoints_idxs, goal_indx, grid_map):
         # -----------------------
         ax1 = axes[0]
         # Adjust 'extent' to center the grid cells around their indices
-        ax1.imshow(traversability_map, cmap='gray', origin='upper', extent=[-0.5, width - 0.5, height - 0.5, -0.5])
+        ax1.imshow(traversability_map, cmap='plasma', origin='upper', extent=[-0.5, width - 0.5, height - 0.5, -0.5])
         # Plot start point
         ax1.plot(start_y, start_x, 'go', markersize=10, label='Start')  # Green circle
         # Plot waypoints line and individual markers
@@ -259,7 +254,7 @@ def plotting(start_idx, waypoints_idxs, goal_indx, grid_map):
         # -------------------
         ax2 = axes[1]
         # Adjust 'extent' similarly for risk map
-        ax2.imshow(risk_map, cmap='hot', origin='upper', extent=[-0.5, width - 0.5, height - 0.5, -0.5])
+        ax2.imshow(risk_map, cmap='plasma', origin='upper', extent=[-0.5, width - 0.5, height - 0.5, -0.5])
         # Plot start point
         ax2.plot(start_y, start_x, 'go', markersize=10, label='Start')  # Green circle
         # Plot waypoints line and individual markers
@@ -285,4 +280,63 @@ def plotting(start_idx, waypoints_idxs, goal_indx, grid_map):
         plt.tight_layout()
 
         # Display the combined figure
+        plt.show()
+
+
+def plotting(start_idx, waypoints_idxs, goal_idx, grid_map):
+    """
+    Plots the Traversability Map and Risk Map side by side with the starting point, waypoints, and goal position.
+
+    Args:
+        start_idx (torch.Tensor): Starting index in the grid map of shape (batch_size, 2).
+        waypoints_idxs (torch.Tensor): Waypoints indices in the grid map of shape (batch_size, num_waypoints, 2).
+        goal_idx (torch.Tensor): Goal index in the grid map of shape (batch_size, 2).
+        grid_map (torch.Tensor): Grid map tensor of shape (batch_size, 2, height, width).
+    """
+
+    # Determine the number of samples in the batch
+    batch_size = grid_map.shape[0]
+
+    for i in range(batch_size):
+        # Extract the traversability and risk maps for the current sample
+        traversability_map = grid_map[i, 0].cpu().numpy()  # Shape: (height, width)
+        risk_map = grid_map[i, 1].cpu().numpy()            # Shape: (height, width)
+
+        # Extract start, waypoints, and goal indices for this sample
+        start = start_idx[i].cpu().numpy()               # Shape: (2,)
+        waypoints = waypoints_idxs[i].cpu().numpy()      # Shape: (num_waypoints, 2)
+        goal = goal_idx[i].cpu().numpy()                 # Shape: (2,)
+
+        # Since tensors use (row, column) indexing and matplotlib uses (x, y),
+        # we need to swap the indices when plotting
+        # Swap the axes for the points
+        start_x, start_y = start[1], start[0]
+        waypoints_x, waypoints_y = waypoints[:, 1], waypoints[:, 0]
+        goal_x, goal_y = goal[1], goal[0]
+
+        # Create a figure with two subplots side by side
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+
+        # Plot the traversability map
+        ax1.imshow(traversability_map, cmap='plasma', origin='upper')
+        ax1.plot(start_x, start_y, 'go', label='Start')         # Green circle
+        ax1.plot(waypoints_x, waypoints_y, 'bo', label='Waypoints')  # Blue circles
+        ax1.plot(goal_x, goal_y, 'ro', label='Goal')            # Red circle
+        ax1.set_title('Traversability Map')
+        ax1.set_xlabel('X-axis')
+        ax1.set_ylabel('Y-axis')
+        ax1.legend()
+
+        # Plot the risk map
+        ax2.imshow(risk_map, cmap='plasma', origin='upper')
+        ax2.plot(start_x, start_y, 'go', label='Start')
+        ax2.plot(waypoints_x, waypoints_y, 'bo', label='Waypoints')
+        ax2.plot(goal_x, goal_y, 'ro', label='Goal')
+        ax2.set_title('Risk Map')
+        ax2.set_xlabel('X-axis')
+        ax2.set_ylabel('Y-axis')
+        ax2.legend()
+
+        # Adjust layout and display the plot
+        plt.tight_layout()
         plt.show()

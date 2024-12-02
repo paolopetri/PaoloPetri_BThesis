@@ -34,16 +34,15 @@ def main(args):
     num_samples_to_check = 1000
     for idx in range(num_samples_to_check):
         try:
-            offset = 500
+            offset = 0
             sample = dataset[idx + offset]
             print(f"\nSample index: {idx + offset}")
 
             # Extract data from the sample
             grid_map = sample['grid_map']  # Shape: (2, height, width)
             center_position = sample['center_position']  # Shape: [2]
-            t_cam_to_world_SE3 = sample['t_cam_to_world_SE3']  # pp.SE3 object
+            t_cam_to_grid_SE3 = sample['t_cam_to_grid_SE3']  # pp.SE3 object
             goal_position = sample['goal_positions']  # Shape: [3]
-            t_odom_to_grid_SE3 = sample['t_odom_to_grid_SE3']  # pp.SE3 object
 
             device = grid_map.device
 
@@ -54,13 +53,10 @@ def main(args):
             print(f"Center position: {center_position}")
 
             # Print start position SE3
-            print(f"Start position SE3 tensor: {t_cam_to_world_SE3}")
+            print(f"Start position SE3 tensor: {t_cam_to_grid_SE3}")
 
             # Print goal positions
             print(f"Goal positions: {goal_position}")
-
-            # Print odometry to grid transform SE3
-            print(f"Odometry to grid SE3 tensor: {t_odom_to_grid_SE3}")
 
             # Generate waypoints between start and goal positions
             num_waypoints = 3
@@ -83,10 +79,9 @@ def main(args):
             print(f"Goal postion: {goal_position}")
 
             # Prepare transformation parameters
-            t_cam_to_odom_params = t_cam_to_world_SE3.unsqueeze(0)
-            t_odom_to_grid_params = t_odom_to_grid_SE3.unsqueeze(0)  # Shape: [1, 7]
+            t_cam_to_grid_SE3_batch = t_cam_to_grid_SE3.unsqueeze(0)
 
-            print(f"t_cam_to_odom_params shape: {t_cam_to_odom_params.shape}")
+            print(f"t_cam_to_grid_SE3_batch shape: {t_cam_to_grid_SE3_batch.shape}")
 
             # Get grid dimensions
             _, height, width = grid_map.shape  # grid_map shape is (2, H, W)
@@ -105,12 +100,14 @@ def main(args):
             print("Hardcoded waypoints shape:", waypoints.shape)
                         
             # Transform waypoints to grid coordinates
-            transformed_waypoints = TransformPoints2Grid(waypoints, t_cam_to_odom_params, t_odom_to_grid_params)  # Shape: [1, num_waypoints, 3]
+            transformed_waypoints = TransformPoints2Grid(waypoints, t_cam_to_grid_SE3_batch)  # Shape: [1, num_waypoints, 3]
             print(f"Transformed waypoints to grid: {transformed_waypoints}")
+            print(f"Transformed waypoints to grid shape: {transformed_waypoints.shape}")
     
             # Compute grid indices
             waypoints_idxs = Pos2Ind(transformed_waypoints, length_x, length_y, center_xy, voxel_size, device)
             print(f"Waypoints indices: {waypoints_idxs}")
+            print(f"Waypoints indices shape: {waypoints_idxs.shape}")
             # Calculate the trajectory cost
             total_cost = CostofTraj(
                 waypoints=waypoints,
@@ -128,19 +125,21 @@ def main(args):
 
             print(f"Total cost: {total_cost.item()}")
 
-            transformed_start = TransformPoints2Grid(start_position.unsqueeze(0), t_cam_to_odom_params, t_odom_to_grid_params)  # Shape: [1, 3]
+            transformed_start = TransformPoints2Grid(start_position.unsqueeze(0).unsqueeze(0), t_cam_to_grid_SE3_batch)  # Shape: [1, 3]
             print(f"Transformed start position: {transformed_start}")
             start_idx = Pos2Ind(transformed_start, length_x, length_y, center_xy, voxel_size, device)
             print(f"Start index: {start_idx}")
-            transformed_goal = TransformPoints2Grid(goal, t_cam_to_odom_params, t_odom_to_grid_params)  # Shape: [1, 3]
+            transformed_goal = TransformPoints2Grid(goal.unsqueeze(0), t_cam_to_grid_SE3_batch)  # Shape: [1, 3]
             print(f"Transformed goal position: {transformed_goal}")
             goal_indx = Pos2Ind(transformed_goal, length_x, length_y, center_xy, voxel_size, device)
             print(f"Goal index: {goal_indx}")
             print(f"Waypoints indices: {waypoints_idxs}")
 
 
+            start_idx_squeezed = start_idx.squeeze(1)
+            goal_indx_squeezed = goal_indx.squeeze(1)
 
-            plotting(start_idx, waypoints_idxs, goal_indx, grid_map.unsqueeze(0))
+            plotting(start_idx_squeezed, waypoints_idxs, goal_indx_squeezed, grid_map.unsqueeze(0))
 
         except Exception as e:
             print(f"Error processing sample index {idx}:")
