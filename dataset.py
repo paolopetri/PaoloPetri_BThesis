@@ -11,7 +11,7 @@ from torch.utils.data import Dataset
 import numpy as np
 import pypose as pp
 import torchvision.transforms as transforms
-from PIL import Image as PILImage
+import torchvision.transforms.functional as TF
 
 class MapDataset(Dataset):
     """The MapDataset handles the loading of all necessary data from text and image files, performs necessary
@@ -91,15 +91,7 @@ class MapDataset(Dataset):
         center_position = self.center_positions[idx]
         
         # Retrieve the image pair
-        depth_image, risk_image = self.load_image_pair(idx)  # Tuple or tensor: (image1, image2)
-        
-        # Apply transformations to images if necessary
-        if self.transform:
-            depth_image = self.transform(depth_image)  # Tensor of shape (C, 360, 640)
-            risk_image = self.transform(risk_image)    # Tensor of shape (C, 360, 640)
-
-        # Stack the images into a single tensor
-        image_pair = (depth_image, risk_image)  # Shape: (2, C, 360, 640)]
+        image_pair = self.load_image_pair(idx)  # Shape: (2, C, 360, 640)]
         
         # Retrieve the start position
         t_cam_to_world_SE3 = self.t_cam_to_world_SE3[idx]
@@ -169,18 +161,63 @@ class MapDataset(Dataset):
             idx (int): Index of the image pair to load.
 
         Returns:
-            tuple: Tuple containing depth and risk images as PIL Images.
+            tuple: Tuple containing depth and risk images as torch tensors.
         """
         depth_dir = os.path.join(self.data_root, 'depth_images')
         risk_dir = os.path.join(self.data_root, 'risk_images')
 
-        depth_path = os.path.join(depth_dir, f'{idx}.png')
-        risk_path = os.path.join(risk_dir, f'{idx}.png')
+        depth_path = os.path.join(depth_dir, f'{idx}.npy')
+        risk_path = os.path.join(risk_dir, f'{idx}.npy')
 
-        depth_image = PILImage.open(depth_path).convert('RGB')
-        risk_image = PILImage.open(risk_path).convert('RGB')
-        
+        # Load images using numpy
+        depth_image = np.load(depth_path)  # Shape: (1280, 1920)
+        risk_image = np.load(risk_path)    # Shape: (427, 640, 3)
+
+        # Ensure images have three channels
+        depth_image = self.ensure_three_channels(depth_image)  # Shape: (1280, 1920, 3)
+
+        # Convert numpy arrays to torch tensors and permute to (C, H, W)
+        depth_image = torch.from_numpy(depth_image).permute(2, 0, 1).float()  # Shape: (3, 1280, 1920)
+        risk_image = torch.from_numpy(risk_image).permute(2, 0, 1).float()    # Shape: (3, 427, 640)
+
+        # Apply resizing to both images to get (3, 360, 640)
+        depth_image = self.resize_image(depth_image, size=(360, 640))
+        risk_image = self.resize_image(risk_image, size=(360, 640))
+
         return depth_image, risk_image
+    
+    def ensure_three_channels(self, image):
+        """
+        Ensures that the image has three channels.
+
+        Args:
+            image (np.ndarray): The image to check and modify.
+
+        Returns:
+            np.ndarray: The image with three channels.
+        """
+        if image.ndim == 2:
+            # Single-channel image, stack to create three channels
+            image = np.stack((image,)*3, axis=-1)
+        elif image.shape[2] == 1:
+            # Single-channel in last dimension, repeat to create three channels
+            image = np.repeat(image, 3, axis=2)
+        return image
+    
+    def resize_image(self, image, size):
+        """
+        Resizes the image tensor to the given size.
+
+        Args:
+            image (torch.Tensor): Image tensor of shape (C, H, W).
+            size (tuple): Desired output size (height, width).
+
+        Returns:
+            torch.Tensor: Resized image tensor.
+        """
+        # The input image tensor is of shape (C, H, W)
+        image = TF.resize(image, size=size, interpolation=TF.InterpolationMode.BILINEAR)
+        return image
     
 
 
@@ -200,7 +237,7 @@ class MapDataset(Dataset):
         t_base_to_world_SE3 = pp.SE3(t_base_to_world_tensor)  # Shape: [num_samples, 7]
 
         # Define the static transform from camera link to base link frame
-        # t_cam_to_base = torch.tensor([0.001, 0.197, -0.432, 0.544, 0.544, -0.453, 0.451], dtype=torch.float32, device=self.device) # Shape: [7]
+        # t_cam_to_base = torch.tensor([-0.460, -0.002, 0.115, 0.544, 0.544, -0.453, -0.451], dtype=torch.float32, device=self.device) # Shape: [7]
         t_cam_to_base = torch.tensor([0, 0, 0, 0, 0, 0, 1], dtype=torch.float32, device=self.device) # Shape: [7] # Identity transform
         # Repeat the static transform for the entire batch
         t_cam_to_base_batch = pp.SE3(t_cam_to_base.unsqueeze(0).repeat(t_base_to_world.shape[0], 1))  # Shape: [num_samples, 7]

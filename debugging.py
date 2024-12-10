@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 import traceback
 import pypose as pp  # Import PyPose for SE3 transformations
+import matplotlib.pyplot as plt
 
 # Import your dataset and utility functions
 from dataset import MapDataset
@@ -9,7 +10,7 @@ from utils import CostofTraj, TransformPoints2Grid, Pos2Ind, plotting  # Adjust 
 
 def main(args):
     # Define the path to your debugging dataset
-    data_root = 'DebuggingData'  # Replace with the actual path
+    data_root = 'TrainingData'  # Replace with the actual path
 
     # Initialize the MapDataset
     try:
@@ -34,7 +35,7 @@ def main(args):
     num_samples_to_check = 1000
     for idx in range(num_samples_to_check):
         try:
-            offset = 400
+            offset = 320
             sample = dataset[idx + offset]
             print(f"\nSample index: {idx + offset}")
 
@@ -44,6 +45,9 @@ def main(args):
             t_cam_to_world_SE3 = sample['t_cam_to_world_SE3']  # pp.SE3 object
             goal_position = sample['goal_positions']  # Shape: [3]
             t_odom_to_grid_SE3 = sample['t_odom_to_grid_SE3']  # pp.SE3 object
+            depth_image, risk_image = sample['image_pair']
+            print(f"Depth image shape: {depth_image.shape}")
+            print(f"Risk image shape: {risk_image.shape}")
 
             device = grid_map.device
 
@@ -138,12 +142,18 @@ def main(args):
             print(f"Goal index: {goal_indx}")
             print(f"Waypoints indices: {waypoints_idxs}")
 
-            start_idx = start_idx.squeeze(1)
-            goal_indx = goal_indx.squeeze(1)
+            start_idx = start_idx.squeeze(0).squeeze(0)
+            goal_indx = goal_indx.squeeze(0).squeeze(0)
+            waypoints_idxs = waypoints_idxs.squeeze(0)
 
 
 
-            plotting(start_idx, waypoints_idxs, goal_indx, grid_map.unsqueeze(0))
+            fig = plotting(start_idx, waypoints_idxs, goal_indx, grid_map)
+            plt.show(block=False)  # Display the plot without blocking
+            input("Press Enter to continue...")  # Wait for user input
+            plt.close(fig)
+
+            
 
         except Exception as e:
             print(f"Error processing sample index {idx}:")

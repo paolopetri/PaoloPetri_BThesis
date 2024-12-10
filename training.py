@@ -5,10 +5,11 @@ from torch.utils.data import DataLoader, random_split
 import torchvision.transforms as transforms
 import wandb
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 # Import your dataset and other modules
 from dataset import MapDataset
 from planner_net import PlannerNet
-from utils import CostofTraj, TransformPoints2Grid, Pos2Ind
+from utils import CostofTraj, TransformPoints2Grid, Pos2Ind, plot2grid
 from traj_opt import TrajOpt
 
 def main():
@@ -18,12 +19,16 @@ def main():
         project="navigation_model",
         config={
             "num_epochs": 10,
-            "batch_size": 16,
+            "batch_size": 32,
             "learning_rate": 1e-4,
             "weight_decay": 1e-5,
             "encoder_channel": 16,
             "knodes": 5,
-            "voxel_size": 0.15
+            "step": 0.5,
+            "voxel_size": 0.15,
+            "alpha": 0.5,
+            "epsilon": 1.0,
+            "delta": 5.0
         }
     )
     config = wandb.config
@@ -39,7 +44,11 @@ def main():
     weight_decay = config.weight_decay
     encoder_channel = config.encoder_channel
     knodes = config.knodes
+    step = config.step
     voxel_size = config.voxel_size
+    alpha = config.alpha
+    epsilon = config.epsilon
+    delta = config.delta
 
     # Initialize the dataset with transformations
     transform = transforms.Compose([
@@ -111,7 +120,7 @@ def main():
 
             # Forward pass
             preds, fear = model(depth_img, risk_img, goal_position)  # (batch, num_waypoints, 3)
-            waypoints = traj_opt.TrajGeneratorFromPFreeRot(preds, step=0.1)  # (batch, num_waypoints, 3)
+            waypoints = traj_opt.TrajGeneratorFromPFreeRot(preds, step=step)  # (batch, num_waypoints, 3)
 
 
             _, _, length_x, length_y = grid_map.shape
@@ -128,9 +137,9 @@ def main():
                 length_x=length_x,
                 length_y=length_y,
                 device=device,
-                alpha=1,
-                epsilon=1.0,
-                delta=1,
+                alpha=alpha,
+                epsilon=epsilon,
+                delta=delta,
                 is_map=True
             )
 
@@ -170,7 +179,7 @@ def main():
 
                 # Forward pass
                 preds, fear = model(depth_img, risk_img, goal_position)  # (batch, num_waypoints, 3)
-                waypoints = traj_opt.TrajGeneratorFromPFreeRot(preds, step=0.1)  # (batch, num_waypoints, 3)
+                waypoints = traj_opt.TrajGeneratorFromPFreeRot(preds, step=step)  # (batch, num_waypoints, 3)
                 waypoints = waypoints.to(device)
 
                 _, _, length_x, length_y = grid_map.shape
@@ -187,18 +196,69 @@ def main():
                     length_x=length_x,
                     length_y=length_y,
                     device=device,
-                    alpha=1,
-                    epsilon=1.0,
-                    delta=1,
+                    alpha=alpha,
+                    epsilon=epsilon,
+                    delta=delta,
                     is_map=True
                 )
 
                 val_loss += loss.item()
                 val_bar.set_postfix(loss=loss.item())
 
-                # Plot the waypoints and trajectory
+                # For wandb, plot the waypoints and trajectory
+            # Extract the first sample from the batch
+            grid_map_sample = grid_map[0]
+            center_position_sample = center_position[0]
+            t_odom_to_grid_SE3_sample = t_odom_to_grid_SE3[0]
+            t_cam_to_world_SE3_sample = t_cam_to_world_SE3[0]
+            goal_position_sample = goal_position[0]
+            waypoints_sample = waypoints[0]
+            grid_idxs_sample = grid_idxs[0]
 
-                
+            # Prepare the start position
+            start_position = torch.tensor([0.0, 0.0, 0.0], device=device)
+
+            # Adjust dimensions
+            start_position_expanded = start_position.unsqueeze(0).unsqueeze(0)
+            t_cam_to_world_SE3_expanded = t_cam_to_world_SE3_sample.unsqueeze(0)
+            t_odom_to_grid_SE3_expanded = t_odom_to_grid_SE3_sample.unsqueeze(0)
+            center_position_expanded = center_position_sample.unsqueeze(0)
+
+            # Transform and compute indices
+            transformed_start = TransformPoints2Grid(
+                start_position_expanded, t_cam_to_world_SE3_expanded, t_odom_to_grid_SE3_expanded
+            )
+            start_idx = Pos2Ind(
+                transformed_start, length_x, length_y, center_position_expanded, voxel_size, device
+            )
+            start_idx_squeezed = start_idx.squeeze(0).squeeze(0)
+
+            goal_position_expanded = goal_position_sample.unsqueeze(0).unsqueeze(0)
+            transformed_goal = TransformPoints2Grid(
+                goal_position_expanded, t_cam_to_world_SE3_expanded, t_odom_to_grid_SE3_expanded
+            )
+            goal_idx = Pos2Ind(
+                transformed_goal, length_x, length_y, center_position_expanded, voxel_size, device
+            )
+            goal_idx_squeezed = goal_idx.squeeze(0).squeeze(0)
+
+            # Waypoints indices
+            grid_idxs_squeezed = grid_idxs_sample  # Shape: (num_waypoints, 2)
+
+            # Call the plotting function
+            fig = plot2grid(
+                start_idx_squeezed.long(),
+                grid_idxs_squeezed.long(),
+                goal_idx_squeezed.long(),
+                grid_map_sample
+            )
+
+            # Log the figure
+            wandb.log({"Trajectory Plot": wandb.Image(fig)})
+
+            # Close the figure
+            plt.close(fig)
+
 
         # Calculate average validation loss for the epoch
         avg_val_loss = val_loss / len(val_loader)
@@ -221,5 +281,4 @@ def main():
                 break
 
 if __name__ == '__main__':
-    print("hello")
     main()
