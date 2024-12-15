@@ -11,6 +11,7 @@ from dataset import MapDataset
 from planner_net import PlannerNet
 from utils import CostofTraj, TransformPoints2Grid, Pos2Ind, plot2grid
 from traj_opt import TrajOpt
+from traj_viz import TrajViz
 
 def main():
     print("Training script started.")
@@ -19,14 +20,16 @@ def main():
         project="navigation_model",
         config={
             "num_epochs": 10,
-            "batch_size": 32,
+            "batch_size": 64,
+            "num_workers": 8,
             "learning_rate": 1e-4,
             "weight_decay": 1e-5,
             "encoder_channel": 16,
             "knodes": 5,
-            "step": 0.5,
+            "step": 1.0,
             "voxel_size": 0.15,
             "alpha": 0.5,
+            "beta": 1.0,
             "epsilon": 1.0,
             "delta": 5.0
         }
@@ -40,6 +43,7 @@ def main():
     # Hyperparameters
     num_epochs = config.num_epochs
     batch_size = config.batch_size
+    num_workers = config.num_workers
     learning_rate = config.learning_rate
     weight_decay = config.weight_decay
     encoder_channel = config.encoder_channel
@@ -47,6 +51,7 @@ def main():
     step = config.step
     voxel_size = config.voxel_size
     alpha = config.alpha
+    beta = config.beta
     epsilon = config.epsilon
     delta = config.delta
 
@@ -72,7 +77,7 @@ def main():
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=4,
+        num_workers=num_workers,
         pin_memory=True,
         drop_last=True
     )
@@ -81,7 +86,7 @@ def main():
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=4,
+        num_workers=num_workers,
         pin_memory=True,
         drop_last=False
     )
@@ -121,7 +126,11 @@ def main():
             # Forward pass
             preds, fear = model(depth_img, risk_img, goal_position)  # (batch, num_waypoints, 3)
             waypoints = traj_opt.TrajGeneratorFromPFreeRot(preds, step=step)  # (batch, num_waypoints, 3)
+            
 
+            # For Motion loss
+            _, num_p, _ = waypoints.shape
+            desired_wp = traj_opt.TrajGeneratorFromPFreeRot(goal_position[:, None, 0:3], step=1.0/(num_p-1))
 
             _, _, length_x, length_y = grid_map.shape
 
@@ -129,8 +138,9 @@ def main():
             grid_idxs = Pos2Ind(transformed_waypoints, length_x, length_y, center_position, voxel_size, device)  # (batch, num_waypoints)
 
             # Calculate the trajectory cost
-            loss = CostofTraj(
+            total_loss, tloss, rloss, mloss, gloss = CostofTraj(
                 waypoints=waypoints,
+                desired_wp = desired_wp,
                 goals=goal_position,
                 grid_maps=grid_map,
                 grid_idxs=grid_idxs,
@@ -138,6 +148,7 @@ def main():
                 length_y=length_y,
                 device=device,
                 alpha=alpha,
+                beta=beta,
                 epsilon=epsilon,
                 delta=delta,
                 is_map=True
@@ -145,11 +156,19 @@ def main():
 
             # Backward and optimize
             optimizer.zero_grad()
-            loss.backward()
+            total_loss.backward()
             optimizer.step()
 
-            running_loss += loss.item()
-            train_bar.set_postfix(loss=loss.item())
+            running_loss += total_loss.item()
+            train_bar.set_postfix(loss=total_loss.item())
+
+            wandb.log({
+                "train_total_loss": total_loss.item(),
+                "train_traversability_loss": tloss.item(),
+                "train_risk_loss": rloss.item(),
+                "train_motion_loss": mloss.item(),
+                "train_goal_loss": gloss.item()
+            })
 
         # Update learning rate
         scheduler.step()
@@ -182,14 +201,19 @@ def main():
                 waypoints = traj_opt.TrajGeneratorFromPFreeRot(preds, step=step)  # (batch, num_waypoints, 3)
                 waypoints = waypoints.to(device)
 
+                # For Motion loss
+                _, num_p, _ = waypoints.shape
+                desired_wp = traj_opt.TrajGeneratorFromPFreeRot(goal_position[:, None, 0:3], step=1.0/(num_p-1))
+
                 _, _, length_x, length_y = grid_map.shape
 
                 transformed_waypoints = TransformPoints2Grid(waypoints, t_cam_to_world_SE3, t_odom_to_grid_SE3)  # (batch, num_waypoints, 3)
                 grid_idxs = Pos2Ind(transformed_waypoints, length_x, length_y, center_position, voxel_size, device)  # (batch, num_waypoints)
 
                 # Calculate the trajectory cost
-                loss = CostofTraj(
+                total_loss, tloss, rloss, mloss, gloss = CostofTraj(
                     waypoints=waypoints,
+                    desired_wp = desired_wp,
                     goals=goal_position,
                     grid_maps=grid_map,
                     grid_idxs=grid_idxs,
@@ -197,15 +221,42 @@ def main():
                     length_y=length_y,
                     device=device,
                     alpha=alpha,
+                    beta=beta,
                     epsilon=epsilon,
                     delta=delta,
                     is_map=True
                 )
 
-                val_loss += loss.item()
-                val_bar.set_postfix(loss=loss.item())
+                val_loss += total_loss.item()
+                val_bar.set_postfix(loss=total_loss.item())
+
+                wandb.log({
+                    "validation_total_loss": total_loss.item(),
+                    "validation_traversability_loss": tloss.item(),
+                    "validation_risk_loss": rloss.item(),
+                    "validation_motion_loss": mloss.item(),
+                    "validation_goal_loss": gloss.item()
+                })
 
                 # For wandb, plot the waypoints and trajectory
+
+
+            
+            # traj_visualizer = TrajViz(root_path="TrainingData")
+            # result_images = traj_visualizer.VizImages(
+            #     preds=preds,
+            #     waypoints=waypoints,
+            #     odom=t_cam_to_world_SE3,
+            #     goal=goal_position,
+            #     fear=fear,
+            #     depth_images=depth_img,
+            #     risk_images=risk_img,
+            #     is_shown=True
+            # )
+
+
+
+
             # Extract the first sample from the batch
             grid_map_sample = grid_map[0]
             center_position_sample = center_position[0]

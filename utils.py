@@ -9,14 +9,15 @@ import copy
 from typing import List
 import open3d.visualization.rendering as rendering
 
-def CostofTraj(waypoints, goals, grid_maps, grid_idxs,
+def CostofTraj(waypoints, desired_wp, goals, grid_maps, grid_idxs,
                length_x, length_y, device,
-               alpha=1, epsilon=1.0, delta=1, is_map=True):
+               alpha=1.0, beta = 1.0, epsilon=1.0, delta=1.0, is_map=True):
     """
     Calculates the total cost of trajectories for a batch based on traversability, risk, and goal proximity.
 
     Args:
         waypoints (torch.Tensor): Waypoints in camera frame. Shape: [batch_size, num_waypoints, 3]
+        desired_wp (torch.Tensor): Desired direction of the waypoints. Shape: [batch_size, num_waypoints, 3]
         goals (torch.Tensor): Goal positions in grid frame. Shape: [batch_size, 3]
         grid_maps (torch.Tensor): Grid maps. Shape: [batch_size, 2, height, width]
         grid_idxs (torch.Tensor): Grid indices for waypoints. Shape: [batch_size, num_waypoints, 2]
@@ -24,14 +25,19 @@ def CostofTraj(waypoints, goals, grid_maps, grid_idxs,
         length_y (int): Grid map length in y-dimension.
         device (torch.device): The device to perform computations on.
         alpha (float): Weight for traversability loss.
-        epsilon (float): Weight for risk loss.
+        beta (float): Weight for risk loss.
+        epsilon (float): Weight for motion loss.
         delta (float): Weight for goal loss.
         is_map (bool): Indicates if the map is initialized.
 
     Returns:
-        torch.Tensor: Total cost (scalar).
+        total_cost (torch.Tensor): Scalar tensor representing the total cost averaged over the batch.
+        t_loss_mean (torch.Tensor): Mean traversability loss over the batch.
+        r_loss_mean (torch.Tensor): Mean risk loss over the batch.
+        mloss_mean (torch.Tensor): Mean motion loss over the batch.
+        gloss_mean (torch.Tensor): Mean goal loss over the batch.
     """
-    batch_size, num_waypoints, _ = waypoints.shape
+    batch_size, num_p, _ = waypoints.shape
 
     if is_map:
         # Normalize grid indices
@@ -51,7 +57,7 @@ def CostofTraj(waypoints, goals, grid_maps, grid_idxs,
             mode='nearest',
             padding_mode='border',
             align_corners=True
-        ).squeeze(1).squeeze(2)  # Shape: [batch_size, num_waypoints]
+        ).squeeze(1).squeeze(2)  # Shape: [batch_size, num_p]
 
         t_loss_M = t_loss_M.to(torch.float32)
         t_loss = torch.sum(t_loss_M, dim=1)  # Shape: [batch_size]
@@ -63,7 +69,7 @@ def CostofTraj(waypoints, goals, grid_maps, grid_idxs,
             mode='nearest',
             padding_mode='border',
             align_corners=True
-        ).squeeze(1).squeeze(2)  # Shape: [batch_size, num_waypoints]
+        ).squeeze(1).squeeze(2)  # Shape: [batch_size, num_p]
 
         r_loss_M = r_loss_M.to(torch.float32)
         r_loss = torch.sum(r_loss_M, dim=1)  # Shape: [batch_size]
@@ -78,18 +84,24 @@ def CostofTraj(waypoints, goals, grid_maps, grid_idxs,
     gloss = torch.norm(goals - waypoints[:, -1, :], dim=1)  # Shape: [batch_size]
     gloss = torch.log(gloss + 1.0)  # Shape: [batch_size]
 
-    # Total Cost per sample
-    total_cost_per_sample = alpha * t_loss + epsilon * r_loss + delta * gloss  # Shape: [batch_size]
+    # Motion Loss
+    desired_ds = torch.norm(desired_wp[:, 1:num_p, :] - desired_wp[:, 0:num_p-1, :], dim=2)
+    wp_ds = torch.norm(waypoints[:, 1:num_p, :] - waypoints[:, 0:num_p-1, :], dim=2)
+    mloss = torch.abs(desired_ds - wp_ds)
+    mloss = torch.sum(mloss, axis=1)
 
-    # Aggregate total cost over the batch
+
+    # Total Cost per sample
+    total_cost_per_sample = alpha * t_loss + beta * r_loss + epsilon * mloss +  delta * gloss  # Shape: [batch_size]
     total_cost = torch.mean(total_cost_per_sample)  # Scalar
 
-    # Optionally, print individual losses
-    print(f"Traversability Loss: {t_loss.mean().item()}")
-    print(f"Risk Loss: {r_loss.mean().item()}")
-    print(f"Goal Loss: {gloss.mean().item()}")
+    # Compute means of individual losses
+    t_loss_mean = t_loss.mean()
+    r_loss_mean = r_loss.mean()
+    mloss_mean = mloss.mean()
+    gloss_mean = gloss.mean()
 
-    return total_cost
+    return total_cost, t_loss_mean, r_loss_mean, mloss_mean, gloss_mean
 
 
 def TransformPoints2Grid(waypoints, t_cam_to_world_tensor, t_world_to_grid_tensor):
@@ -235,120 +247,3 @@ def plot2grid(start_idx, waypoints_idxs, goal_idx, grid_map):
     plt.tight_layout()
     # Return the figure object instead of showing it
     return fig
-
-
-def plot2img(self, preds: torch.Tensor, waypoints: torch.Tensor, odom: torch.Tensor, goal: torch.Tensor, fear: torch.Tensor, images: torch.Tensor, visual_offset: float = 0.5, mesh_size: float = 0.3, is_shown: bool = True) -> List[np.ndarray]:
-        """
-        Visualize images of the trajectory.
-
-        Parameters:
-        preds (tensor): Predicted Key points
-        waypoints (tensor): Trajectory waypoints
-        odom (tensor): Odometry data
-        goal (tensor): Goal position
-        fear (tensor): Fear value per waypoint
-        images (tensor): Image data
-        visual_offset (float): Offset for visualizing images
-        mesh_size (float): Size of mesh objects in images
-        is_shown (bool): If True, show images; otherwise, return image list
-        """
-        batch_size, _, _ = waypoints.shape
-
-        preds_ws = self.TransformPoints(odom, preds)
-        wp_ws = self.TransformPoints(odom, waypoints)
-
-        if goal.shape[-1] != 7:
-            pp_goal = pp.identity_SE3(batch_size, device=goal.device)
-            pp_goal.tensor()[:, 0:3] = goal
-            goal = pp_goal.tensor()
-
-        goal_ws  = pp.SE3(odom) @ pp.SE3(goal)
-
-        # Detach to CPU
-        preds_ws = preds_ws.tensor()[:, :, 0:3].cpu().detach().numpy()
-        wp_ws    = wp_ws.tensor()[:, :, 0:3].cpu().detach().numpy()
-        goal_ws  = goal_ws.tensor()[:, 0:3].cpu().detach().numpy()
-
-        # Adjust height
-        preds_ws[:, :, 2] -= visual_offset
-        wp_ws[:, :, 2]    -= visual_offset
-        goal_ws[:, 2]     -= visual_offset
-
-        # Set material shader
-        mtl = o3d.visualization.rendering.MaterialRecord()
-        mtl.base_color = [1.0, 1.0, 1.0, 0.3]
-        mtl.shader = "defaultUnlit"
-
-        # Set meshes
-        small_sphere      = o3d.geometry.TriangleMesh.create_sphere(mesh_size/20.0)  # trajectory points
-        mesh_sphere       = o3d.geometry.TriangleMesh.create_sphere(mesh_size/5.0)  # successful predict points
-        mesh_sphere_fear  = o3d.geometry.TriangleMesh.create_sphere(mesh_size/5.0)  # unsuccessful predict points
-        mesh_box          = o3d.geometry.TriangleMesh.create_box(mesh_size, mesh_size, mesh_size)  # end points
-
-        # Set colors
-        small_sphere.paint_uniform_color([0.99, 0.2, 0.1])  # green
-        mesh_sphere.paint_uniform_color([0.4, 1.0, 0.1])
-        mesh_sphere_fear.paint_uniform_color([1.0, 0.64, 0.0])
-        mesh_box.paint_uniform_color([1.0, 0.64, 0.1])
-
-        # Init open3D render
-        render = rendering.OffscreenRenderer(self.camera.width, self.camera.height)
-        render.scene.set_background([0.0, 0.0, 0.0, 1.0])  # RGBA
-        render.scene.scene.enable_sun_light(False)
-
-        # compute veretx normals
-        small_sphere.compute_vertex_normals()
-        mesh_sphere.compute_vertex_normals()
-        mesh_sphere_fear.compute_vertex_normals()
-        mesh_box.compute_vertex_normals()
-        
-        wp_start_idx = 1
-        cv_img_list = []
-
-        for i in range(batch_size):
-            # Add geometries
-            gp = goal_ws[i, :]
-
-            # Add goal marker
-            goal_mesh = copy.deepcopy(mesh_box).translate((gp[0]-mesh_size/2.0, gp[1]-mesh_size/2.0, gp[2]-mesh_size/2.0))
-            render.scene.add_geometry("goal_mesh", goal_mesh, mtl)
-
-            # Add predictions
-            for j in range(preds_ws[i, :, :].shape[0]):
-                kp = preds_ws[i, j, :]
-                if fear[i, :] > 0.5:
-                    kp_mesh = copy.deepcopy(mesh_sphere_fear).translate((kp[0], kp[1], kp[2]))
-                else:
-                    kp_mesh = copy.deepcopy(mesh_sphere).translate((kp[0], kp[1], kp[2]))
-                render.scene.add_geometry("keypose"+str(j), kp_mesh, mtl)
-
-            # Add trajectory
-            for k in range(wp_start_idx, wp_ws[i, :, :].shape[0]):
-                wp = wp_ws[i, k, :]
-                wp_mesh = copy.deepcopy(small_sphere).translate((wp[0], wp[1], wp[2]))
-                render.scene.add_geometry("waypoint"+str(k), wp_mesh, mtl)
-
-            # Set cameras
-            self.CameraLookAtPose(odom[i, :], render, self.camera_tilt)
-
-            # Project to image
-            img_o3d = np.asarray(render.render_to_image())
-            mask = (img_o3d < 10).all(axis=2)
-
-            # Attach image
-            c_img = images[i, :, :].expand(3, -1, -1)
-            c_img = c_img.cpu().detach().numpy().transpose(1, 2, 0)
-            c_img = (c_img * 255 / np.max(c_img)).astype('uint8')
-            img_o3d[mask, :] = c_img[mask, :]
-            img_cv2 = cv2.cvtColor(img_o3d, cv2.COLOR_RGBA2BGRA)
-            cv_img_list.append(img_cv2)
-
-            # Visualize image
-            if is_shown: 
-                cv2.imshow("Preview window", img_cv2)
-                cv2.waitKey()
-
-            # Clear render geometry
-            render.scene.clear_geometry()        
-
-        return cv_img_list

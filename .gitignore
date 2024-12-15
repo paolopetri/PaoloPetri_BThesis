@@ -8,5 +8,6 @@ ruff.toml
 wandb/
 TrainingDataCAMGRID/
 DebuggingDataCAMGRID/
-presentation/
 best_model.pth
+helper/
+debugging.py
