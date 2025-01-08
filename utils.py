@@ -3,11 +3,10 @@ import pypose as pp
 import matplotlib.pyplot as plt
 import numpy as np
 import torch.nn.functional as F
-import cv2
-import open3d as o3d
-import copy
-from typing import List
-import open3d.visualization.rendering as rendering
+import imageio
+import io
+from PIL import Image
+
 
 def CostofTraj(waypoints, desired_wp, goals, grid_maps, grid_idxs,
                length_x, length_y, device,
@@ -193,57 +192,3 @@ def Pos2Ind(points, length_x, length_y, center_xy, voxel_size, device):
     # center_xy is broadcasted over num_points
     indices = center_idx + (center_xy - points_xy) / voxel_size
     return indices
-
-
-def plot2grid(start_idx, waypoints_idxs, goal_idx, grid_map):
-    """
-    Plots the Traversability Map and Risk Map side by side with the starting point, waypoints, and goal position.
-
-    Args:
-        start_idx (torch.Tensor): Starting index in the grid map of shape (2,).
-        waypoints_idxs (torch.Tensor): Waypoints indices in the grid map of shape (num_waypoints, 2).
-        goal_idx (torch.Tensor): Goal index in the grid map of shape (2,).
-        grid_map (torch.Tensor): Grid map tensor of shape (2, height, width).
-    """
-
-    # Extract the traversability and risk maps
-    traversability_map = grid_map[0].cpu().numpy()  # Shape: (height, width)
-    risk_map = grid_map[1].cpu().numpy()            # Shape: (height, width)
-
-    # Extract start, waypoints, and goal indices
-    start = start_idx.cpu().numpy()               # Shape: (2,)
-    waypoints = waypoints_idxs.cpu().numpy()      # Shape: (num_waypoints, 2)
-    goal = goal_idx.cpu().numpy()                 # Shape: (2,)
-
-    # Swap the axes for the points (since matplotlib uses (x, y) indexing)
-    start_x, start_y = start[1], start[0]
-    waypoints_x, waypoints_y = waypoints[:, 1], waypoints[:, 0]
-    goal_x, goal_y = goal[1], goal[0]
-
-    # Create a figure with two subplots side by side
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
-
-    # Plot the traversability map
-    ax1.imshow(traversability_map, cmap='plasma', origin='upper')
-    ax1.plot(start_x, start_y, 'go', label='Start')           # Green circle
-    ax1.plot(waypoints_x, waypoints_y, '.-', color = 'silver', label='Waypoints')  
-    ax1.plot(goal_x, goal_y, 'ro', label='Goal')              # Red circle
-    ax1.set_title('Traversability Map')
-    ax1.set_xlabel('Y-Index')
-    ax1.set_ylabel('X-Index')
-    ax1.legend()
-
-    # Plot the risk map
-    ax2.imshow(risk_map, cmap='plasma', origin='upper')
-    ax2.plot(start_x, start_y, 'go', label='Start')
-    ax2.plot(waypoints_x, waypoints_y, '.-', color = 'silver', label='Waypoints')  
-    ax2.plot(goal_x, goal_y, 'ro', label='Goal')
-    ax2.set_title('Risk Map')
-    ax2.set_xlabel('Y-Index')
-    ax2.set_ylabel('X-Index')
-    ax2.legend()
-
-    # Adjust layout
-    plt.tight_layout()
-    # Return the figure object instead of showing it
-    return fig

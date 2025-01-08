@@ -12,6 +12,7 @@ import numpy as np
 import pypose as pp
 import torchvision.transforms as transforms
 import torchvision.transforms.functional as TF
+from PIL import Image
 
 class MapDataset(Dataset):
     """The MapDataset handles the loading of all necessary data from text and image files, performs necessary
@@ -19,7 +20,7 @@ class MapDataset(Dataset):
 
         Key functionalities include:
         - Loading traversability and risk grid maps and stacking them into a single tensor.
-        - Loading center positions, image pairs, start positions, goal positions, and odometry to grid transformations.
+        - Loading center positions, image pairs, start positions, goal positions, and world to grid transformations.
         - Transforming start positions from the base link frame to the camera frame.
         - Generating goal positions based on future positions and transforming them into the frame of the starting position.
     """
@@ -43,17 +44,13 @@ class MapDataset(Dataset):
       
         self.device = device if device is not None else torch.device('cpu')
     
-        # Load center positions in grid frame
         self.center_positions = self.load_center_positions()  # Shape: (num_maps, 2)
         
-        # Load start positions (starting frames or odometry)
         self.t_cam_to_world_SE3 = self.load_t_cam_to_world_SE3()  # Shape: (num_maps, 7)
         
-        # Load goal positions (in camera frame)
-        self.goal_positions = self.load_goal_positions()  # Shape: (num_maps,max_episodes, 3)
+        self.goal_positions = self.load_goal_positions()  # Shape: (num_maps, 3)
 
-        # Load odometry to grid transforms
-        self.t_odom_to_grid_SE3 = self.load_odom_to_grid_transforms_SE3()  # Shape: (num_maps, 7)
+        self.t_world_to_grid_SE3 = self.load_world_to_grid_transforms_SE3()  # Shape: (num_maps, 7)
 
         
     def __len__(self):
@@ -78,38 +75,30 @@ class MapDataset(Dataset):
                 - 'center_position': Tensor of shape (2), center of grid in the grid frame.
                 - 'images': Tuple of transformed depth and risk images.
                 - 'start_position_SE3': pp.SE3 object, start position transformed to camera frame.
-                - 'goal_positions': Tensor of shape (max_episodes, 3), goal positions in the starting frame.
-                - 't_odom_to_grid': Tensor of shape (7), odometry to grid transformation parameters.
+                - 'goal_positions': Tensor of shape (3), goal positions in the starting frame.
+                - 't_world_to_grid': Tensor of shape (7), world to grid transformation parameters.
         """
-        # Retrieve the grid map for the given index
         traversability_map, risk_map = self.load_grid_map(idx)  # Shape: (height), (width)
         
-        # Stack the maps into a single tensor
         grid_map = torch.stack([traversability_map, risk_map], dim=0)  # Shape: (2, 266, 266)
 
-        # Retrieve the grid position
         center_position = self.center_positions[idx]
         
-        # Retrieve the image pair
         image_pair = self.load_image_pair(idx)  # Shape: (2, C, 360, 640)]
-        
-        # Retrieve the start position
+
         t_cam_to_world_SE3 = self.t_cam_to_world_SE3[idx]
         
-        # Retrieve the goal position
         goal_positions = self.goal_positions[idx]
 
-        # Retrieve the odometry to grid transform
-        t_odom_to_grid_SE3 = self.t_odom_to_grid_SE3[idx]
-        
-        # Prepare and return the sample
+        t_world_to_grid_SE3 = self.t_world_to_grid_SE3[idx]
+
         sample = {
             'grid_map': grid_map,
             'center_position': center_position,
             'image_pair': image_pair,
             't_cam_to_world_SE3': t_cam_to_world_SE3,
             'goal_positions': goal_positions,
-            't_odom_to_grid_SE3': t_odom_to_grid_SE3
+            't_world_to_grid_SE3': t_world_to_grid_SE3
         }
         return sample
     
@@ -169,18 +158,15 @@ class MapDataset(Dataset):
         depth_path = os.path.join(depth_dir, f'{idx}.npy')
         risk_path = os.path.join(risk_dir, f'{idx}.npy')
 
-        # Load images using numpy
         depth_image = np.load(depth_path)  # Shape: (1280, 1920)
         risk_image = np.load(risk_path)    # Shape: (427, 640, 3)
 
-        # Ensure images have three channels
         depth_image = self.ensure_three_channels(depth_image)  # Shape: (1280, 1920, 3)
 
         # Convert numpy arrays to torch tensors and permute to (C, H, W)
         depth_image = torch.from_numpy(depth_image).permute(2, 0, 1).float()  # Shape: (3, 1280, 1920)
         risk_image = torch.from_numpy(risk_image).permute(2, 0, 1).float()    # Shape: (3, 427, 640)
 
-        # Apply resizing to both images to get (3, 360, 640)
         depth_image = self.resize_image(depth_image, size=(360, 640))
         risk_image = self.resize_image(risk_image, size=(360, 640))
 
@@ -220,7 +206,6 @@ class MapDataset(Dataset):
         return image
     
 
-
     def load_t_cam_to_world_SE3(self):
         """
         Loads start positions and orientations of the base link from a text file,
@@ -232,17 +217,14 @@ class MapDataset(Dataset):
         filepath = os.path.join(self.data_root, 't_cam_to_world.txt')
         t_base_to_world = np.loadtxt(filepath, delimiter=',')  # Shape: (num_samples, 7)
         t_base_to_world_tensor = torch.tensor(t_base_to_world, dtype=torch.float32, device=self.device)
-
-        # Convert to pp.SE3 (batch of transformations)
         t_base_to_world_SE3 = pp.SE3(t_base_to_world_tensor)  # Shape: [num_samples, 7]
 
         # Define the static transform from camera link to base link frame
-        # t_cam_to_base = torch.tensor([-0.460, -0.002, 0.115, 0.544, 0.544, -0.453, -0.451], dtype=torch.float32, device=self.device) # Shape: [7]
-        t_cam_to_base = torch.tensor([0, 0, 0, 0, 0, 0, 1], dtype=torch.float32, device=self.device) # Shape: [7] # Identity transform
-        # Repeat the static transform for the entire batch
+        t_cam_to_base = torch.tensor([-0.460, -0.002, 0.115, 0.544, 0.544, -0.453, -0.451], dtype=torch.float32, device=self.device) # Shape: [7]
+        # t_cam_to_base = torch.tensor([0, 0, 0, 0, 0, 0, 1], dtype=torch.float32, device=self.device) # Shape: [7] # Identity transform
+  
         t_cam_to_base_batch = pp.SE3(t_cam_to_base.unsqueeze(0).repeat(t_base_to_world.shape[0], 1))  # Shape: [num_samples, 7]
 
-        # Apply the transformation to all start positions
         t_cam_to_world_SE3 = t_base_to_world_SE3 @ t_cam_to_base_batch  # Shape: [num_samples, 7]
 
         return t_cam_to_world_SE3
@@ -257,21 +239,16 @@ class MapDataset(Dataset):
             torch.Tensor: Transformed goal positions as a tensor of shape (num_samples, 3).
         """
 
-        # Load start positions as SE(3) transformations
         t_cam_to_world_SE3 = self.t_cam_to_world_SE3  # Shape: [num_samples]
 
         num_samples = t_cam_to_world_SE3.shape[0]
 
-        # Create indices for the next positions
         goal_indices = torch.arange(num_samples, device=self.device) + 30  # Shape: [num_samples]
 
-        # Clip goal_indices to handle the last index (avoid out-of-bounds)
         goal_indices = torch.clamp(goal_indices, max=num_samples - 1)  # Shape: [num_samples]
 
-        # Get goal positions as SE(3) transformations
         goal_positions_SE3 = t_cam_to_world_SE3[goal_indices]  # Shape: [num_samples]
-        
-        # Transform goal positions into the frame of the starting position
+
         transformed_goal_SE3 = t_cam_to_world_SE3.Inv() @ goal_positions_SE3  # Shape: [num_samples]
 
         goal_xyz_SE3 = transformed_goal_SE3.translation()  # Extract positions (x, y, z) from SE3 objects
@@ -280,21 +257,21 @@ class MapDataset(Dataset):
 
         
 
-    def load_odom_to_grid_transforms_SE3(self):
+    def load_world_to_grid_transforms_SE3(self):
         """
-        Loads odometry to grid transformations from a text file and returns them as pp.SE3 objects.
+        Loads world to grid transformations from a text file and returns them as pp.SE3 objects.
 
         Returns:
             pp.SE3: A batch of SE(3) transformations of shape [num_samples].
         """
-        filepath = os.path.join(self.data_root, 'maps', 'odom_to_grid_transforms.txt')
+        filepath = os.path.join(self.data_root, 'maps', 'world_to_grid_transforms.txt')
         
         transforms = np.loadtxt(filepath, delimiter=',')  # Shape: (num_samples, 7)
         
         transforms_tensor = torch.tensor(transforms, dtype=torch.float32, device=self.device)
         
-        t_odom_to_grid_SE3 = pp.SE3(transforms_tensor)  # Shape: [num_samples]
+        t_world_to_grid_SE3 = pp.SE3(transforms_tensor)  # Shape: [num_samples]
         
-        return t_odom_to_grid_SE3
+        return t_world_to_grid_SE3
 
 

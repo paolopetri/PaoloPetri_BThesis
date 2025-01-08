@@ -1,17 +1,16 @@
-
 import torch
 from torch import optim
 from torch.utils.data import DataLoader, random_split
 import torchvision.transforms as transforms
 import wandb
 from tqdm import tqdm
-import matplotlib.pyplot as plt
 # Import your dataset and other modules
 from dataset import MapDataset
 from planner_net import PlannerNet
-from utils import CostofTraj, TransformPoints2Grid, Pos2Ind, plot2grid
+from utils import CostofTraj, TransformPoints2Grid, Pos2Ind, create_gif_from_batch
+from utils_viz import plot_trajectory_on_images
+import matplotlib.pyplot as plt
 from traj_opt import TrajOpt
-from traj_viz import TrajViz
 
 def main():
     print("Training script started.")
@@ -19,8 +18,8 @@ def main():
     wandb.init(
         project="navigation_model",
         config={
-            "num_epochs": 10,
-            "batch_size": 64,
+            "num_epochs": 20,
+            "batch_size": 32,
             "num_workers": 8,
             "learning_rate": 1e-4,
             "weight_decay": 1e-5,
@@ -31,7 +30,7 @@ def main():
             "alpha": 0.5,
             "beta": 1.0,
             "epsilon": 1.0,
-            "delta": 5.0
+            "delta": 8.0
         }
     )
     config = wandb.config
@@ -63,7 +62,7 @@ def main():
     full_dataset = MapDataset(data_root='TrainingData', transform=transform)
 
     # Define validation split ratio
-    val_split = 0.2
+    val_split = 0.3
     val_size = int(len(full_dataset) * val_split)
     train_size = len(full_dataset) - val_size
 
@@ -116,7 +115,7 @@ def main():
             # Move data to GPU
             grid_map = sample['grid_map'].to(device)                # (batch, 2, 266, 266)
             center_position = sample['center_position'].to(device)  # (batch, 2)
-            t_odom_to_grid_SE3 = sample['t_odom_to_grid_SE3'].to(device)  # (batch, 7)
+            t_world_to_grid_SE3 = sample['t_world_to_grid_SE3'].to(device)  # (batch, 7)
             t_cam_to_world_SE3 = sample['t_cam_to_world_SE3'].to(device)  # (batch, 7)
             depth_img, risk_img = sample['image_pair']              
             depth_img = depth_img.to(device)
@@ -126,7 +125,6 @@ def main():
             # Forward pass
             preds, fear = model(depth_img, risk_img, goal_position)  # (batch, num_waypoints, 3)
             waypoints = traj_opt.TrajGeneratorFromPFreeRot(preds, step=step)  # (batch, num_waypoints, 3)
-            
 
             # For Motion loss
             _, num_p, _ = waypoints.shape
@@ -134,7 +132,7 @@ def main():
 
             _, _, length_x, length_y = grid_map.shape
 
-            transformed_waypoints = TransformPoints2Grid(waypoints, t_cam_to_world_SE3, t_odom_to_grid_SE3)  # (batch, num_waypoints, 3)
+            transformed_waypoints = TransformPoints2Grid(waypoints, t_cam_to_world_SE3, t_world_to_grid_SE3)  # (batch, num_waypoints, 3)
             grid_idxs = Pos2Ind(transformed_waypoints, length_x, length_y, center_position, voxel_size, device)  # (batch, num_waypoints)
 
             # Calculate the trajectory cost
@@ -188,7 +186,7 @@ def main():
                 # Move data to GPU
                 grid_map = sample['grid_map'].to(device)                # (batch, 2, 266, 266)
                 center_position = sample['center_position'].to(device)  # (batch, 2)
-                t_odom_to_grid_SE3 = sample['t_odom_to_grid_SE3'].to(device)  # (batch, 7)
+                t_world_to_grid_SE3 = sample['t_world_to_grid_SE3'].to(device)  # (batch, 7)
                 t_cam_to_world_SE3 = sample['t_cam_to_world_SE3'].to(device)  # (batch, 7)
                 depth_img, risk_img = sample['image_pair']              
                 depth_img = depth_img.to(device)
@@ -207,7 +205,7 @@ def main():
 
                 _, _, length_x, length_y = grid_map.shape
 
-                transformed_waypoints = TransformPoints2Grid(waypoints, t_cam_to_world_SE3, t_odom_to_grid_SE3)  # (batch, num_waypoints, 3)
+                transformed_waypoints = TransformPoints2Grid(waypoints, t_cam_to_world_SE3, t_world_to_grid_SE3)  # (batch, num_waypoints, 3)
                 grid_idxs = Pos2Ind(transformed_waypoints, length_x, length_y, center_position, voxel_size, device)  # (batch, num_waypoints)
 
                 # Calculate the trajectory cost
@@ -241,74 +239,43 @@ def main():
                 # For wandb, plot the waypoints and trajectory
 
 
-            
-            # traj_visualizer = TrajViz(root_path="TrainingData")
-            # result_images = traj_visualizer.VizImages(
-            #     preds=preds,
-            #     waypoints=waypoints,
-            #     odom=t_cam_to_world_SE3,
-            #     goal=goal_position,
-            #     fear=fear,
-            #     depth_images=depth_img,
-            #     risk_images=risk_img,
-            #     is_shown=True
-            # )
 
-
-
-
-            # Extract the first sample from the batch
-            grid_map_sample = grid_map[0]
-            center_position_sample = center_position[0]
-            t_odom_to_grid_SE3_sample = t_odom_to_grid_SE3[0]
-            t_cam_to_world_SE3_sample = t_cam_to_world_SE3[0]
-            goal_position_sample = goal_position[0]
-            waypoints_sample = waypoints[0]
-            grid_idxs_sample = grid_idxs[0]
-
-            # Prepare the start position
-            start_position = torch.tensor([0.0, 0.0, 0.0], device=device)
-
-            # Adjust dimensions
-            start_position_expanded = start_position.unsqueeze(0).unsqueeze(0)
-            t_cam_to_world_SE3_expanded = t_cam_to_world_SE3_sample.unsqueeze(0)
-            t_odom_to_grid_SE3_expanded = t_odom_to_grid_SE3_sample.unsqueeze(0)
-            center_position_expanded = center_position_sample.unsqueeze(0)
-
-            # Transform and compute indices
-            transformed_start = TransformPoints2Grid(
-                start_position_expanded, t_cam_to_world_SE3_expanded, t_odom_to_grid_SE3_expanded
-            )
-            start_idx = Pos2Ind(
-                transformed_start, length_x, length_y, center_position_expanded, voxel_size, device
-            )
-            start_idx_squeezed = start_idx.squeeze(0).squeeze(0)
-
-            goal_position_expanded = goal_position_sample.unsqueeze(0).unsqueeze(0)
-            transformed_goal = TransformPoints2Grid(
-                goal_position_expanded, t_cam_to_world_SE3_expanded, t_odom_to_grid_SE3_expanded
-            )
-            goal_idx = Pos2Ind(
-                transformed_goal, length_x, length_y, center_position_expanded, voxel_size, device
-            )
-            goal_idx_squeezed = goal_idx.squeeze(0).squeeze(0)
-
-            # Waypoints indices
-            grid_idxs_squeezed = grid_idxs_sample  # Shape: (num_waypoints, 2)
-
-            # Call the plotting function
-            fig = plot2grid(
-                start_idx_squeezed.long(),
-                grid_idxs_squeezed.long(),
-                goal_idx_squeezed.long(),
-                grid_map_sample
+            gif_path = create_gif_from_batch(
+            grid_map,
+            center_position,
+            t_world_to_grid_SE3,
+            t_cam_to_world_SE3,
+            goal_position,
+            waypoints,
+            grid_idxs,
+            batch_size=grid_map.shape[0],
+            device=device,
+            voxel_size=voxel_size,
+            length_x=length_x,
+            length_y=length_y,
+            fps=1,
+            gif_name="trajectory.gif"
             )
 
-            # Log the figure
-            wandb.log({"Trajectory Plot": wandb.Image(fig)})
+            figs = plot_trajectory_on_images(
+                waypoints_cam=waypoints,
+                depth=depth_img,
+                risk=risk_img
+            )
 
-            # Close the figure
-            plt.close(fig)
+            # -------------------------------------------------
+            # 3) Show them without saving
+            # -------------------------------------------------
+            # If you're in a GUI/desktop environment:
+            for fig in figs:
+                fig.show()  # Attempt to open each figure in a new window
+
+            plt.show()  # Ensures all windows actually pop up
+
+            # Log to wandb
+            wandb.log({"Trajectory GIF": wandb.Video(gif_path, format="gif")})
+
+
 
 
         # Calculate average validation loss for the epoch
