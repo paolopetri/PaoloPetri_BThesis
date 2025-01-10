@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import pypose as pp
 import matplotlib.pyplot as plt
 import imageio
 import io
@@ -28,121 +29,70 @@ K_RESIZED[1, 1] *= scale_y  # fy
 # Scale principal points
 K_RESIZED[0, 2] *= scale_x  # cx
 K_RESIZED[1, 2] *= scale_y  # cy
-
-
-# ---------------------------------------------------------------------------
-# 2) image_projection
-# ---------------------------------------------------------------------------
-def image_projection(K: torch.Tensor, points_3d: torch.Tensor) -> torch.Tensor:
-    """
-    Project 3D points (in camera frame) onto the 2D image plane using pinhole projection.
-
-    Args:
-        K (torch.Tensor): Shape (3, 3). The camera intrinsic matrix.
-        points_3d (torch.Tensor): Shape (B, N, 3). 3D points in the camera frame [X, Y, Z].
-
-    Returns:
-        torch.Tensor: Shape (B, N, 2). The 2D points in the image plane [u, v].
-    """
-
-    # points_3d: (B, N, 3)
-    x = points_3d[..., 0]  # (B, N)
-    y = points_3d[..., 1]
-    z = points_3d[..., 2]
-
-    # Check for negative/zero Z
-    if (z <= 0).any():
-        # Print how many are negative or zero
-        num_bad_z = (z <= 0).sum().item()
-        print(f"[WARNING] {num_bad_z} points have z <= 0. Their projections may be invalid.")
-
-    # Extract intrinsics
-    fx, fy = K[0, 0], K[1, 1]
-    cx, cy = K[0, 2], K[1, 2]
-
-    # Pinhole projection: (u, v) = (fx * (x / z) + cx, fy * (y / z) + cy)
-    u = fx * (x / z) + cx
-    v = fy * (y / z) + cy
-
-    # Stack into (B, N, 2)
-    projected_2d = torch.stack([u, v], dim=-1)
-
-    # Debug: check min/max of resulting coordinates
-    min_u, max_u = projected_2d[..., 0].min().item(), projected_2d[..., 0].max().item()
-    min_v, max_v = projected_2d[..., 1].min().item(), projected_2d[..., 1].max().item()
-    print(f"[DEBUG] Projected coords range: u in [{min_u:.2f}, {max_u:.2f}], "
-          f"v in [{min_v:.2f}, {max_v:.2f}]")
-
-    return projected_2d
+K_RESIZED = K_RESIZED.to(device='cuda')
 
 
 # ---------------------------------------------------------------------------
 # 3) plot_trajectory_on_images
 # ---------------------------------------------------------------------------
-def plot_trajectory_on_images(
+def plot_single_traj_on_img(
     waypoints_cam: torch.Tensor,
     depth: torch.Tensor,
     risk: torch.Tensor,
     K: torch.Tensor = K_RESIZED
-) -> list:
+) -> plt.Figure:
     """
-    For each sample in the batch:
-      1) Projects 3D camera-frame points to 2D pixel coords.
-      2) Overlays them on the corresponding depth and risk images (side by side).
-      3) Returns a list of Matplotlib Figure objects (one per batch element).
+    Plots a single set of 3D camera-frame waypoints over the given depth and risk images
+    (side by side) and returns a single Matplotlib Figure.
 
     Args:
-        waypoints_cam (torch.Tensor): (B, N, 3) batch of 3D points in camera frame.
-        depth (torch.Tensor): (B, 3, H, W) batch of depth images (channels-first).
-        risk (torch.Tensor): (B, 3, H, W) batch of risk maps (channels-first).
+        waypoints_cam (torch.Tensor): (N, 3) 3D points in camera frame for this sample.
+        depth (torch.Tensor): (3, H, W) depth image (channels-first).
+        risk (torch.Tensor): (3, H, W) risk map (channels-first).
         K (torch.Tensor): (3, 3) camera intrinsic matrix (default = K_RESIZED).
 
     Returns:
-        list: A list of matplotlib.figure.Figure objects, one per batch sample.
+        plt.Figure: A single Matplotlib Figure with two subplots (depth + risk).
     """
 
-    # 1) Project the entire batch to 2D using the provided K
-    #    projected_2d: (B, N, 2)
-    projected_2d = image_projection(K, waypoints_cam)
+    # 1) Project the 3D points to 2D
+    #    shape: (N, 2)
+    projected_2d = pp.point2pixel(waypoints_cam, K, extrinsics=None)
 
-    B, C, H, W = depth.shape  # e.g. (B, 3, 360, 640)
-    figs = []
+    # 2) Convert the depth/risk images to NumPy
+    #    shape: (H, W, 3)
+    depth_np = depth.detach().cpu().numpy().transpose(1, 2, 0)
+    risk_np  = risk.detach().cpu().numpy().transpose(1, 2, 0)
 
-    for i in range(B):
-        # 2) Extract the i-th sample's data
-        points_i = projected_2d[i]  # (N, 2)
-        depth_i  = depth[i]         # (3, H, W) for this sample
-        risk_i   = risk[i]          # (3, H, W)
+    # 3) Create a figure with two subplots side by side
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
 
-        # Convert each image to NumPy for plotting => shape (H, W, 3)
-        depth_i_np = depth_i.detach().cpu().numpy().transpose(1, 2, 0)
-        risk_i_np  = risk_i.detach().cpu().numpy().transpose(1, 2, 0)
+    # -- Depth image subplot --
+    axes[0].imshow(depth_np)
+    axes[0].scatter(
+        projected_2d[:, 0].cpu().numpy(),
+        projected_2d[:, 1].cpu().numpy(),
+        c='red', s=5
+    )
+    axes[0].set_title("Depth Image")
+    axes[0].axis('off')
 
-        # 3) Create a figure with two side-by-side subplots
-        fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+    # -- Risk image subplot --
+    axes[1].imshow(risk_np)
+    axes[1].scatter(
+        projected_2d[:, 0].cpu().numpy(),
+        projected_2d[:, 1].cpu().numpy(),
+        c='red', s=5
+    )
+    axes[1].set_title("Risk Image")
+    axes[1].axis('off')
 
-        # -- Depth image subplot --
-        axes[0].imshow(depth_i_np)
-        axes[0].scatter(points_i[:, 0].cpu().numpy(),
-                        points_i[:, 1].cpu().numpy(),
-                        c='red', s=5)
-        axes[0].set_title(f"Depth Sample {i} (size: {H}x{W})")
-        axes[0].axis('off')
-
-        # -- Risk image subplot --
-        axes[1].imshow(risk_i_np)
-        axes[1].scatter(points_i[:, 0].cpu().numpy(),
-                        points_i[:, 1].cpu().numpy(),
-                        c='red', s=5)
-        axes[1].set_title(f"Risk Sample {i} (size: {H}x{W})")
-        axes[1].axis('off')
-
-        figs.append(fig)
-
-    return figs
+    plt.tight_layout()
+    return fig
 
 
-def plot2grid(start_idx, waypoints_idxs, goal_idx, grid_map):
+
+def plot_single_traj_on_map(start_idx, waypoints_idxs, goal_idx, grid_map):
     """
     Plots the Traversability Map and Risk Map side by side with the starting point, waypoints, and goal position.
 
@@ -196,6 +146,78 @@ def plot2grid(start_idx, waypoints_idxs, goal_idx, grid_map):
     return fig
 
 
+def combine_figures(fig_img: plt.Figure, fig_map: plt.Figure) -> plt.Figure:
+    """
+    Combines two existing Matplotlib Figure objects (fig_img, fig_map)
+    by converting each to a PIL image and placing them in a new 2-row figure.
+    """
+    # 1) Convert fig_img to a PIL Image
+    buf_img = io.BytesIO()
+    fig_img.savefig(buf_img, format='png', dpi=100, bbox_inches='tight')
+    buf_img.seek(0)
+    pil_img = Image.open(buf_img)
+
+    # 2) Convert fig_map to a PIL Image
+    buf_map = io.BytesIO()
+    fig_map.savefig(buf_map, format='png', dpi=100, bbox_inches='tight')
+    buf_map.seek(0)
+    pil_map = Image.open(buf_map)
+
+    # Good practice: close the original figures to free resources
+    plt.close(fig_img)
+    plt.close(fig_map)
+
+    # 3) Create a new figure with two rows for the two PIL Images
+    fig, axes = plt.subplots(2, 1, figsize=(12, 12))
+
+    axes[0].imshow(pil_img)
+    axes[0].axis('off')
+    axes[0].set_title("Figure 1 (Images)")
+
+    axes[1].imshow(pil_map)
+    axes[1].axis('off')
+    axes[1].set_title("Figure 2 (Maps)")
+
+    plt.tight_layout()
+    return fig
+
+
+
+# GIF creation
+
+def create_gif_from_figures(
+    figures: list,
+    output_path: str,
+    fps: int = 2
+):
+    """
+    Takes a list of Matplotlib Figures, converts each to a PIL image, 
+    and saves them all as a GIF at output_path.
+    """
+    frames = []
+    for fig in figures:
+        # Convert fig -> PNG bytes -> PIL Image
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', dpi=100)
+        buf.seek(0)
+        frames.append(Image.open(buf))
+
+        # Close the figure to free up memory
+        plt.close(fig)
+
+    # Save frames as a GIF
+    imageio.mimsave(output_path, frames, fps=fps)
+
+
+
+
+
+
+
+
+# ---------------------------------------------------------------------------
+# 4) fig_to_pil intendet for forward pass
+
 def fig_to_pil(fig):
     """
     Convert a Matplotlib figure to a PIL Image in memory.
@@ -224,7 +246,7 @@ def create_gif_from_batch(
     gif_name="trajectory.gif"
 ):
     """
-    Creates a GIF for a batch of samples, returning the path to the GIF.
+    Creates a GIF for a batch of samples, returning the path to the GIF. It is meant to be used in the forwayrd pass of a model. Just for visualization purposes.
     """
     # Collect frames here
     frames = []
@@ -274,7 +296,7 @@ def create_gif_from_batch(
         grid_idxs_squeezed = grid_idxs_sample  # (num_waypoints, 2)
 
         # Plot for this sample
-        fig = plot2grid(
+        fig = plot_single_traj_on_map(
             start_idx.long(),
             grid_idxs_squeezed.long(),
             goal_idx.long(),

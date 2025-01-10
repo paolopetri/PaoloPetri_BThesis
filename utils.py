@@ -1,11 +1,6 @@
 import torch
 import pypose as pp
-import matplotlib.pyplot as plt
-import numpy as np
 import torch.nn.functional as F
-import imageio
-import io
-from PIL import Image
 
 
 def CostofTraj(waypoints, desired_wp, goals, grid_maps, grid_idxs,
@@ -192,3 +187,32 @@ def Pos2Ind(points, length_x, length_y, center_xy, voxel_size, device):
     # center_xy is broadcasted over num_points
     indices = center_idx + (center_xy - points_xy) / voxel_size
     return indices
+
+def prepare_data_for_plotting(waypoints, goal_position, center_position, grid_map, t_cam_to_world_SE3, t_world_to_grid_SE3, voxel_size):
+
+    device = grid_map.device
+
+    _, length_x, length_y = grid_map.shape
+
+    start_position = torch.tensor([0.0, 0.0, 0.0], device=device)
+
+    # prepare data for fuctions:
+    start = start_position.unsqueeze(0).unsqueeze(0)
+    t_cam_to_world_params = t_cam_to_world_SE3.unsqueeze(0)
+    t_world_to_grid_params = t_world_to_grid_SE3.unsqueeze(0)
+    goal = goal_position.unsqueeze(0).unsqueeze(0)
+    center_xy = center_position.unsqueeze(0)
+
+    transformed_start = TransformPoints2Grid(start, t_cam_to_world_params, t_world_to_grid_params)
+    transformed_waypoints = TransformPoints2Grid(waypoints, t_cam_to_world_params, t_world_to_grid_params)
+    transformed_goal = TransformPoints2Grid(goal, t_cam_to_world_params, t_world_to_grid_params)
+    
+    start_idx = Pos2Ind(transformed_start, length_x, length_y, center_xy, voxel_size, device)
+    waypoints_idxs = Pos2Ind(transformed_waypoints, length_x, length_y, center_xy, voxel_size, device)
+    goal_idx = Pos2Ind(transformed_goal, length_x, length_y, center_xy, voxel_size, device)
+    
+    start_idx_sqz = start_idx.squeeze(0).squeeze(0)
+    waypoints_idxs_sqz = waypoints_idxs.squeeze(0)
+    goal_idx_sqz = goal_idx.squeeze(0).squeeze(0)
+
+    return start_idx_sqz, waypoints_idxs_sqz, goal_idx_sqz

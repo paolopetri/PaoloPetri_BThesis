@@ -12,7 +12,7 @@ import numpy as np
 import pypose as pp
 import torchvision.transforms as transforms
 import torchvision.transforms.functional as TF
-from PIL import Image
+from scipy.ndimage import gaussian_filter
 
 class MapDataset(Dataset):
     """The MapDataset handles the loading of all necessary data from text and image files, performs necessary
@@ -102,7 +102,7 @@ class MapDataset(Dataset):
         }
         return sample
     
-    def load_grid_map(self, idx):
+    def load_grid_map(self, idx, sigma=1.0):
         """
         Loads traversability and risk grid map into tensors.
 
@@ -119,10 +119,13 @@ class MapDataset(Dataset):
         risk_file = os.path.join(risk_dir, f'{idx}.txt')
 
         traversability_map = np.loadtxt(traversability_file, delimiter=',').T
-        traversability_tensor = torch.tensor(traversability_map, dtype=torch.float32, device=self.device)
-        
         risk_map = np.loadtxt(risk_file, delimiter=',').T
-        risk_tensor = torch.tensor(risk_map, dtype=torch.float32, device=self.device)
+
+        traversability_map_smoothed = gaussian_filter(traversability_map, sigma=sigma)
+        risk_map_smoothed = gaussian_filter(risk_map, sigma)
+
+        traversability_tensor = torch.tensor(traversability_map_smoothed, dtype=torch.float32, device=self.device)
+        risk_tensor = torch.tensor(risk_map_smoothed, dtype=torch.float32, device=self.device)
 
         return traversability_tensor, risk_tensor
     

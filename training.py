@@ -7,9 +7,7 @@ from tqdm import tqdm
 # Import your dataset and other modules
 from dataset import MapDataset
 from planner_net import PlannerNet
-from utils import CostofTraj, TransformPoints2Grid, Pos2Ind, create_gif_from_batch
-from utils_viz import plot_trajectory_on_images
-import matplotlib.pyplot as plt
+from utils import CostofTraj, TransformPoints2Grid, Pos2Ind
 from traj_opt import TrajOpt
 
 def main():
@@ -19,7 +17,7 @@ def main():
         project="navigation_model",
         config={
             "num_epochs": 20,
-            "batch_size": 32,
+            "batch_size": 64,
             "num_workers": 8,
             "learning_rate": 1e-4,
             "weight_decay": 1e-5,
@@ -27,7 +25,7 @@ def main():
             "knodes": 5,
             "step": 1.0,
             "voxel_size": 0.15,
-            "alpha": 0.5,
+            "alpha": 1.0,
             "beta": 1.0,
             "epsilon": 1.0,
             "delta": 8.0
@@ -160,14 +158,6 @@ def main():
             running_loss += total_loss.item()
             train_bar.set_postfix(loss=total_loss.item())
 
-            wandb.log({
-                "train_total_loss": total_loss.item(),
-                "train_traversability_loss": tloss.item(),
-                "train_risk_loss": rloss.item(),
-                "train_motion_loss": mloss.item(),
-                "train_goal_loss": gloss.item()
-            })
-
         # Update learning rate
         scheduler.step()
 
@@ -228,57 +218,15 @@ def main():
                 val_loss += total_loss.item()
                 val_bar.set_postfix(loss=total_loss.item())
 
-                wandb.log({
-                    "validation_total_loss": total_loss.item(),
-                    "validation_traversability_loss": tloss.item(),
-                    "validation_risk_loss": rloss.item(),
-                    "validation_motion_loss": mloss.item(),
-                    "validation_goal_loss": gloss.item()
-                })
-
-                # For wandb, plot the waypoints and trajectory
-
-
-
-            gif_path = create_gif_from_batch(
-            grid_map,
-            center_position,
-            t_world_to_grid_SE3,
-            t_cam_to_world_SE3,
-            goal_position,
-            waypoints,
-            grid_idxs,
-            batch_size=grid_map.shape[0],
-            device=device,
-            voxel_size=voxel_size,
-            length_x=length_x,
-            length_y=length_y,
-            fps=1,
-            gif_name="trajectory.gif"
-            )
-
-            figs = plot_trajectory_on_images(
-                waypoints_cam=waypoints,
-                depth=depth_img,
-                risk=risk_img
-            )
-
-            # -------------------------------------------------
-            # 3) Show them without saving
-            # -------------------------------------------------
-            # If you're in a GUI/desktop environment:
-            for fig in figs:
-                fig.show()  # Attempt to open each figure in a new window
-
-            plt.show()  # Ensures all windows actually pop up
-
-            # Log to wandb
-            wandb.log({"Trajectory GIF": wandb.Video(gif_path, format="gif")})
-
-
-
 
         # Calculate average validation loss for the epoch
+        avg_tloss = tloss / len(val_loader)
+        avg_rloss = rloss / len(val_loader)
+        avg_mloss = mloss / len(val_loader)
+        avg_gloss = gloss / len(val_loader)
+
+        wandb.log({"epoch": epoch+1, "tloss": avg_tloss, "rloss": avg_rloss, "mloss": avg_mloss, "gloss": avg_gloss})
+
         avg_val_loss = val_loss / len(val_loader)
         wandb.log({"epoch": epoch+1, "validation_loss": avg_val_loss})
 
@@ -287,8 +235,8 @@ def main():
         # Checkpointing: Save the model if validation loss has decreased
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
-            torch.save(model.state_dict(), "best_model.pth")
-            wandb.save("best_model.pth")
+            torch.save(model.state_dict(), "checkpoints/best_model.pth")
+            wandb.save("checkpoints/best_model.pth")
             trigger_times = 0
             print("Validation loss decreased, saving model.")
         else:
