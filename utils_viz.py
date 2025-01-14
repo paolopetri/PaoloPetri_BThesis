@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import pypose as pp
 import matplotlib.pyplot as plt
+import cv2
 import imageio
 import io
 from PIL import Image
@@ -15,6 +16,8 @@ K_ORIG = torch.tensor([
     [  0.0,     600.29548,    671.98658],
     [  0.0,       0.0,          1.0    ]
 ], dtype=torch.float32)
+K_ORIG = K_ORIG.to(device='cuda')
+K_ORIG_np = K_ORIG.cpu().numpy()
 
 H_ORIG, W_ORIG = 1280, 1920
 H_RESIZE, W_RESIZE = 360, 640
@@ -30,58 +33,118 @@ K_RESIZED[1, 1] *= scale_y  # fy
 K_RESIZED[0, 2] *= scale_x  # cx
 K_RESIZED[1, 2] *= scale_y  # cy
 K_RESIZED = K_RESIZED.to(device='cuda')
+K_np = K_RESIZED.cpu().numpy()
+
+D_HDR = np.array([-0.16434127415921757, 0.026880263864339487, -0.004791904119364893, 0.0007664970542509745], dtype=np.float32)
 
 
-# ---------------------------------------------------------------------------
-# 3) plot_trajectory_on_images
-# ---------------------------------------------------------------------------
-def plot_single_traj_on_img(
-    waypoints_cam: torch.Tensor,
-    depth: torch.Tensor,
-    risk: torch.Tensor,
-    K: torch.Tensor = K_RESIZED
+import cv2
+import numpy as np
+import torch
+import matplotlib.pyplot as plt
+
+# Suppose you have something like:
+# K_ORIG: torch.Tensor or np.ndarray of shape (3, 3)
+# D_ORIG: torch.Tensor or np.ndarray of shape (4,) or (5,)
+
+def plot_rgb_with_distortion(
+    waypoints: torch.Tensor,
+    rgb: torch.Tensor,
 ) -> plt.Figure:
     """
-    Plots a single set of 3D camera-frame waypoints over the given depth and risk images
-    (side by side) and returns a single Matplotlib Figure.
+    Plots 3D camera-frame waypoints onto an RGB image, accounting for lens distortion.
+    
+    Args:
+        waypoints (torch.Tensor): (N, 3) or (1, N, 3) camera-frame 3D points.
+        rgb (torch.Tensor): RGB image as (C, H, W) or (H, W, C) or a NumPy array.
+        K (torch.Tensor/np.ndarray): (3, 3) camera intrinsic matrix.
+        D (torch.Tensor/np.ndarray): distortion coefficients, e.g., shape (4,) or (5,).
+
+    Returns:
+        plt.Figure: Matplotlib Figure with plotted points over the image.
+    """
+    waypoints_cam = waypoints.squeeze(0)
+
+    points_3d = waypoints_cam.detach().cpu().numpy().reshape(-1, 1, 3)
+
+    rvec = np.zeros((3, 1), dtype=np.float32)
+    tvec = np.zeros((3, 1), dtype=np.float32)
+
+    projected_2d, _ = cv2.projectPoints(points_3d, rvec, tvec, K_ORIG_np, D_HDR)
+    projected_2d = projected_2d.reshape(-1, 2)
+
+    if isinstance(rgb, torch.Tensor):
+        rgb = rgb.detach().cpu().numpy()
+        if rgb.ndim == 3 and rgb.shape[0] in [1, 3, 4]:
+            rgb = rgb.transpose(1, 2, 0)  # (C, H, W) -> (H, W, C)
+
+    fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+    ax.imshow(rgb, origin='upper')
+    ax.scatter(projected_2d[:, 0], projected_2d[:, 1], c='red', s=5)
+    ax.set_title("RGB Image with Distortion-Aware Projected Points")
+    ax.axis('off')
+
+    plt.tight_layout()
+    return fig
+
+
+
+def plot_single_traj_on_img_with_distortion(
+    waypoints_cam: torch.Tensor, 
+    depth: torch.Tensor, 
+    risk: torch.Tensor, 
+    K: np.ndarray = K_np,            # (3,3) camera intrinsic matrix in NumPy
+    D: np.ndarray = D_HDR,            
+) -> plt.Figure:
+    """
+    Projects 3D camera-frame waypoints onto the given depth and risk images, 
+    accounting for lens distortion, and returns a single Matplotlib Figure.
 
     Args:
-        waypoints_cam (torch.Tensor): (N, 3) 3D points in camera frame for this sample.
+        waypoints_cam (torch.Tensor): (N, 3) 3D points in camera frame.
         depth (torch.Tensor): (3, H, W) depth image (channels-first).
         risk (torch.Tensor): (3, H, W) risk map (channels-first).
-        K (torch.Tensor): (3, 3) camera intrinsic matrix (default = K_RESIZED).
+        K (np.ndarray): (3, 3) camera intrinsic matrix.
+        D (np.ndarray): distortion coefficients, shape depends on distortion model.
 
     Returns:
         plt.Figure: A single Matplotlib Figure with two subplots (depth + risk).
     """
+    waypoints_cam = waypoints_cam.squeeze(0)
 
-    # 1) Project the 3D points to 2D
-    #    shape: (N, 2)
-    projected_2d = pp.point2pixel(waypoints_cam, K, extrinsics=None)
+    points_3d = waypoints_cam.detach().cpu().numpy().reshape(-1, 1, 3)
+    
+    rvec = np.zeros((3, 1), dtype=np.float32)
+    tvec = np.zeros((3, 1), dtype=np.float32)
+    
+    projected_points_2d, _ = cv2.projectPoints(
+        points_3d,  # 3D points in camera coordinates
+        rvec,
+        tvec,
+        K,        
+        D          
+    )
+    
+    projected_points_2d = projected_points_2d.reshape(-1, 2)
 
-    # 2) Convert the depth/risk images to NumPy
-    #    shape: (H, W, 3)
     depth_np = depth.detach().cpu().numpy().transpose(1, 2, 0)
     risk_np  = risk.detach().cpu().numpy().transpose(1, 2, 0)
 
-    # 3) Create a figure with two subplots side by side
     fig, axes = plt.subplots(1, 2, figsize=(12, 6))
 
-    # -- Depth image subplot --
     axes[0].imshow(depth_np)
     axes[0].scatter(
-        projected_2d[:, 0].cpu().numpy(),
-        projected_2d[:, 1].cpu().numpy(),
+        projected_points_2d[:, 0],  # x
+        projected_points_2d[:, 1],  # y
         c='red', s=5
     )
     axes[0].set_title("Depth Image")
     axes[0].axis('off')
 
-    # -- Risk image subplot --
     axes[1].imshow(risk_np)
     axes[1].scatter(
-        projected_2d[:, 0].cpu().numpy(),
-        projected_2d[:, 1].cpu().numpy(),
+        projected_points_2d[:, 0],
+        projected_points_2d[:, 1],
         c='red', s=5
     )
     axes[1].set_title("Risk Image")
@@ -89,7 +152,6 @@ def plot_single_traj_on_img(
 
     plt.tight_layout()
     return fig
-
 
 
 def plot_single_traj_on_map(start_idx, waypoints_idxs, goal_idx, grid_map):

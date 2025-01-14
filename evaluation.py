@@ -2,13 +2,15 @@ import os
 import torch
 import traceback
 import matplotlib.pyplot as plt
+from PIL import Image
+import torchvision.transforms as transforms
 
 # Import your dataset and utility functions
 from dataset import MapDataset
 from planner_net import PlannerNet
 from traj_opt import TrajOpt
 from utils import prepare_data_for_plotting  # Adjust import paths as necessary
-from utils_viz import plot_single_traj_on_map, plot_single_traj_on_img, combine_figures, create_gif_from_figures
+from utils_viz import plot_single_traj_on_map, plot_single_traj_on_img_with_distortion, combine_figures, create_gif_from_figures, plot_rgb_with_distortion
 
 
 def main(args):
@@ -30,7 +32,7 @@ def main(args):
     model = PlannerNet(16, 5).to(device)
     traj_opt = TrajOpt()
     
-    best_model_path = "checkpoints/best_model.pth"
+    best_model_path = "checkpoints/base2cam.pth"
     try:
         checkpoint = torch.load(best_model_path, map_location=device)
         model.load_state_dict(checkpoint)
@@ -46,12 +48,13 @@ def main(args):
 
     frames_map = []
     frames_img = []
+    frames_rgb = []
     frames_combined = []
 
     num_samples_to_check = 1000
-    offset = 320
+    offset = 360
     skip = 10
-    max_frames = 20
+    max_frames = 10
     fps = 1
 
     for i in range(num_samples_to_check):
@@ -75,20 +78,31 @@ def main(args):
             depth_image = depth_image.to(device)
             risk_image = risk_image.to(device)
 
+
+            transform = transforms.ToTensor()
+
+            rgb_image_path = f'TrainingData/camera/{idx}.png'
+            rgb_image = Image.open(rgb_image_path).convert('RGB')
+            rgb_tensor = transform(rgb_image).to(device)
+
+
             with torch.no_grad():
                 preds, fear = model(depth_image.unsqueeze(0), risk_image.unsqueeze(0), goal_position.unsqueeze(0))
 
-            waypoints = traj_opt.TrajGeneratorFromPFreeRot(preds, step = 0.5)
+            waypoints = traj_opt.TrajGeneratorFromPFreeRot(preds, step = 1.0)
             waypoints = waypoints.to(device)
 
             start_idx, waypoints_idxs, goal_idx = prepare_data_for_plotting(waypoints, goal_position, center_position, grid_map, t_cam_to_world_SE3, t_world_to_grid_SE3, voxel_size)
             
+
             fig_map = plot_single_traj_on_map(start_idx, waypoints_idxs, goal_idx, grid_map)
-            fig_img = plot_single_traj_on_img(waypoints, depth_image, risk_image)
+            fig_img = plot_single_traj_on_img_with_distortion(waypoints, depth_image, risk_image)
             fig_combined = combine_figures(fig_img, fig_map)
+            fig_rgb = plot_rgb_with_distortion(waypoints, rgb_tensor)
 
             frames_map.append(fig_map)
             frames_img.append(fig_img)
+            frames_rgb.append(fig_rgb)
             frames_combined.append(fig_combined)
 
         except Exception as e:
@@ -97,10 +111,12 @@ def main(args):
         
     img_gif_path = "output/trajectory_on_img.gif"
     map_gif_path = "output/trajectory_on_map.gif"
+    rgb_gif_path = "output/trajectory_on_rgb.gif"
     combined_gif_path = "output/trajectory_combined.gif"
 
     create_gif_from_figures(frames_img, img_gif_path, fps)
     create_gif_from_figures(frames_map, map_gif_path, fps)
+    create_gif_from_figures(frames_rgb, rgb_gif_path, fps)
     create_gif_from_figures(frames_combined, combined_gif_path, fps)
     print(f"Saved GIFs to {img_gif_path}, {map_gif_path}, and {combined_gif_path}")
 
