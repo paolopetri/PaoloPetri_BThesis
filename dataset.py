@@ -73,23 +73,19 @@ class MapDataset(Dataset):
             dict: A dictionary containing the sample data:
                 - 'grid_map': Tensor of shape (2, height, width), stacked traversability and risk maps.
                 - 'center_position': Tensor of shape (2), center of grid in the grid frame.
-                - 'images': Tuple of transformed depth and risk images.
-                - 'start_position_SE3': pp.SE3 object, start position transformed to camera frame.
+                - 'image_pair': Tuple of transformed depth and risk images.
+                - 't_cam_to_world_SE3': Transformation object, start position transformed to camera frame.
                 - 'goal_positions': Tensor of shape (3), goal positions in the starting frame.
-                - 't_world_to_grid': Tensor of shape (7), world to grid transformation parameters.
+                - 't_world_to_grid_SE3': Tensor of shape (7), world to grid transformation parameters.
+                - 'start_idx': Tensor containing the start index for waypoint generation.
         """
-        traversability_map, risk_map = self.load_grid_map(idx)  # Shape: (height), (width)
-        
-        grid_map = torch.stack([traversability_map, risk_map], dim=0)  # Shape: (2, 266, 266)
+        traversability_map, risk_map = self.load_grid_map(idx)  # Shape: (height, width)
+        grid_map = torch.stack([traversability_map, risk_map], dim=0)  # Shape: (2, H, W)
 
         center_position = self.center_positions[idx]
-        
-        image_pair = self.load_image_pair(idx)  # Shape: (2, C, 360, 640)]
-
+        image_pair = self.load_image_pair(idx)  # Shape: (2, C, 360, 640)
         t_cam_to_world_SE3 = self.t_cam_to_world_SE3[idx]
-        
         goal_positions = self.goal_positions[idx]
-
         t_world_to_grid_SE3 = self.t_world_to_grid_SE3[idx]
 
         sample = {
@@ -98,9 +94,11 @@ class MapDataset(Dataset):
             'image_pair': image_pair,
             't_cam_to_world_SE3': t_cam_to_world_SE3,
             'goal_positions': goal_positions,
-            't_world_to_grid_SE3': t_world_to_grid_SE3
+            't_world_to_grid_SE3': t_world_to_grid_SE3,
+            'start_idx': torch.tensor(idx, dtype=torch.long)
         }
         return sample
+
     
     def load_grid_map(self, idx, sigma=1.0):
         """
@@ -224,8 +222,8 @@ class MapDataset(Dataset):
 
         # Define the static transform from camera link to base link frame
         # t_cam_to_base = torch.tensor([0.001, 0.197, -0.432, 0.544, 0.544, -0.453, 0.451], dtype=torch.float32, device=self.device) # cam2base
-        t_cam_to_base = torch.tensor([-0.460, -0.002, 0.115, 0.544, 0.544, -0.453, -0.451], dtype=torch.float32, device=self.device) # base2cam
-        # t_cam_to_base = torch.tensor([0, 0, 0, 0, 0, 0, 1], dtype=torch.float32, device=self.device) # Shape: [7] # Identity transform
+        # t_cam_to_base = torch.tensor([-0.460, -0.002, 0.115, 0.544, 0.544, -0.453, -0.451], dtype=torch.float32, device=self.device) # base2cam
+        t_cam_to_base = torch.tensor([0.4, 0, 0, 0, 0, 0, 1], dtype=torch.float32, device=self.device) # Shape: [7] # Offset
   
         t_cam_to_base_batch = pp.SE3(t_cam_to_base.unsqueeze(0).repeat(t_base_to_world.shape[0], 1))  # Shape: [num_samples, 7]
 
@@ -247,7 +245,7 @@ class MapDataset(Dataset):
 
         num_samples = t_cam_to_world_SE3.shape[0]
 
-        goal_indices = torch.arange(num_samples, device=self.device) + 30  # Shape: [num_samples]
+        goal_indices = torch.arange(num_samples, device=self.device) + 30  # Shape: [num_samples] 
 
         goal_indices = torch.clamp(goal_indices, max=num_samples - 1)  # Shape: [num_samples]
 

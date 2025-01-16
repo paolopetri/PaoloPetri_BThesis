@@ -1,125 +1,137 @@
-import os
 import torch
-import traceback
+from torch.utils.data import DataLoader, Subset
+import imageio
+import io
 import matplotlib.pyplot as plt
-from PIL import Image
-import torchvision.transforms as transforms
 
-# Import your dataset and utility functions
 from dataset import MapDataset
+from utils_viz import TrajViz, plot_traj_batch_on_map, combine_figures
+from utils import prepare_data_for_plotting
 from planner_net import PlannerNet
-from traj_opt import TrajOpt
-from utils import prepare_data_for_plotting  # Adjust import paths as necessary
-from utils_viz import plot_single_traj_on_map, plot_single_traj_on_img_with_distortion, combine_figures, create_gif_from_figures, plot_rgb_with_distortion
+from traj_opt import TrajOpt  
 
-
-def main(args):
+def main():
     data_root = 'TrainingData'
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    try:
-        dataset = MapDataset(
-            data_root=data_root,
-            transform=None,
-            device=device
-        )
-        print("MapDataset initialized successfully.")
-    except Exception as e:
-        print("Error initializing MapDataset:")
-        traceback.print_exc()
-        return
+    # 1) Create dataset
+    dataset = MapDataset(
+        data_root=data_root,
+        transform=None,
+        device=device
+    )
 
+    snippet_indices = range(350, 382)
+    subset_dataset = Subset(dataset, snippet_indices)
+
+    viz_loader = DataLoader(
+        subset_dataset,
+        batch_size=4,
+        shuffle=False,
+        num_workers=0
+    )
+
+    # 4) Load your model
     model = PlannerNet(16, 5).to(device)
     traj_opt = TrajOpt()
-    
-    best_model_path = "checkpoints/base2cam.pth"
-    try:
-        checkpoint = torch.load(best_model_path, map_location=device)
-        model.load_state_dict(checkpoint)
-        print(f"Loaded best model from {best_model_path}")
-    except Exception as e:
-        print("Error loading best model:")
-        traceback.print_exc()
-        return
+
+    best_model_path = "checkpoints/best_model.pth"
+    checkpoint = torch.load(best_model_path, map_location=device)
+    model.load_state_dict(checkpoint)
+    print(f"Loaded best model from {best_model_path}")
 
     model.eval()
 
+    # Instantiate visualization
+    viz = TrajViz(root_path=data_root, cameraTilt=-4.0)
     voxel_size = 0.15
 
-    frames_map = []
-    frames_img = []
-    frames_rgb = []
-    frames_combined = []
+    all_out_images = []
 
-    num_samples_to_check = 1000
-    offset = 360
-    skip = 10
-    max_frames = 10
-    fps = 1
+    # Open a writer for the final GIF
+    final_output_path = "output/trajectory_combined_final.gif"
+    writer = imageio.get_writer(final_output_path, fps=1)
 
-    for i in range(num_samples_to_check):
-        idx = i + offset
-
-        if len(frames_map) >= max_frames:
-            break
-
-        if i % skip != 0:
-            continue
-
-        try:
-            sample = dataset[idx]
-
+    with torch.no_grad():
+        for i, sample in enumerate(viz_loader):
+            # Data preparation as before
             grid_map = sample['grid_map'].to(device)
             center_position = sample['center_position'].to(device)
             t_cam_to_world_SE3 = sample['t_cam_to_world_SE3'].to(device)
             goal_position = sample['goal_positions'].to(device)
             t_world_to_grid_SE3 = sample['t_world_to_grid_SE3'].to(device)
-            depth_image, risk_image = sample['image_pair']
-            depth_image = depth_image.to(device)
-            risk_image = risk_image.to(device)
+            depth_img, risk_img = sample['image_pair']
+            depth_img = depth_img.to(device)
+            risk_img = risk_img.to(device)
 
+            print(f"t_cam_to_world_SE3: {t_cam_to_world_SE3.type()}")
 
-            transform = transforms.ToTensor()
+            # Forward pass
+            preds, fear = model(depth_img, risk_img, goal_position)
+            waypoints = traj_opt.TrajGeneratorFromPFreeRot(preds, step=0.5)
 
-            rgb_image_path = f'TrainingData/camera/{idx}.png'
-            rgb_image = Image.open(rgb_image_path).convert('RGB')
-            rgb_tensor = transform(rgb_image).to(device)
+            # Visualization 
+            list_img_depth = viz.VizImages(
+                preds=preds,
+                waypoints=waypoints,
+                odom=t_cam_to_world_SE3,
+                goal=goal_position,
+                fear=fear,
+                images=depth_img,
+                visual_offset=0.4,
+                mesh_size=0.5,
+                is_shown=False
+            )
 
+            list_img_risk = viz.VizImages(
+                preds=preds,
+                waypoints=waypoints,
+                odom=t_cam_to_world_SE3,
+                goal=goal_position,
+                fear=fear,
+                images=risk_img,
+                visual_offset=0.4,
+                mesh_size=0.5,
+                is_shown=False
+            )
 
-            with torch.no_grad():
-                preds, fear = model(depth_image.unsqueeze(0), risk_image.unsqueeze(0), goal_position.unsqueeze(0))
+            list_img_combined = viz.combinecv(list_img_depth, list_img_risk)
+            figs_img = viz.cv2fig(list_img_combined)
 
-            waypoints = traj_opt.TrajGeneratorFromPFreeRot(preds, step = 1.0)
-            waypoints = waypoints.to(device)
+            start_idx, waypoints_idxs, goal_idx = prepare_data_for_plotting(
+                waypoints, goal_position, center_position, grid_map, 
+                t_cam_to_world_SE3, t_world_to_grid_SE3, voxel_size
+            )
 
-            start_idx, waypoints_idxs, goal_idx = prepare_data_for_plotting(waypoints, goal_position, center_position, grid_map, t_cam_to_world_SE3, t_world_to_grid_SE3, voxel_size)
-            
+            figs_map = plot_traj_batch_on_map(start_idx, waypoints_idxs, goal_idx, grid_map)
 
-            fig_map = plot_single_traj_on_map(start_idx, waypoints_idxs, goal_idx, grid_map)
-            fig_img = plot_single_traj_on_img_with_distortion(waypoints, depth_image, risk_image)
-            fig_combined = combine_figures(fig_img, fig_map)
-            fig_rgb = plot_rgb_with_distortion(waypoints, rgb_tensor)
+            # Combine figures and write frames directly to GIF
+            for fig_img, fig_map in zip(figs_img, figs_map):
+                fig_combined = combine_figures(fig_img, fig_map)
 
-            frames_map.append(fig_map)
-            frames_img.append(fig_img)
-            frames_rgb.append(fig_rgb)
-            frames_combined.append(fig_combined)
+                # Convert figure to image data
+                buf = io.BytesIO()
+                fig_combined.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+                buf.seek(0)
+                frame = imageio.imread(buf)
 
-        except Exception as e:
-            print(f"Error processing sample {idx}:")
-            traceback.print_exc()
-        
-    img_gif_path = "output/trajectory_on_img.gif"
-    map_gif_path = "output/trajectory_on_map.gif"
-    rgb_gif_path = "output/trajectory_on_rgb.gif"
-    combined_gif_path = "output/trajectory_combined.gif"
+                writer.append_data(frame)
 
-    create_gif_from_figures(frames_img, img_gif_path, fps)
-    create_gif_from_figures(frames_map, map_gif_path, fps)
-    create_gif_from_figures(frames_rgb, rgb_gif_path, fps)
-    create_gif_from_figures(frames_combined, combined_gif_path, fps)
-    print(f"Saved GIFs to {img_gif_path}, {map_gif_path}, and {combined_gif_path}")
+                # Close figure to free memory
+                plt.close(fig_img)
+                plt.close(fig_map)
+                plt.close(fig_combined)
 
+            out_images = list_img_combined
+            all_out_images.extend(out_images)
+
+            print(f"[Batch {i}] - Processed {len(out_images)} images.")
+
+    writer.close()
+
+    print("Done visualizing snippet.")
+    print(f"Total images collected: {len(all_out_images)}")
 
 if __name__ == "__main__":
-    main(None)  
+    main()
+    

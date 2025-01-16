@@ -12,4 +12,5 @@ checkpoints/
 Collection/
 output/
 helper/
-debugging.py
+iplanner_percept_net.py
+iplanner_planner_net.py

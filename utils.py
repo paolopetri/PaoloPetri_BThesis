@@ -55,6 +55,8 @@ def CostofTraj(waypoints, desired_wp, goals, grid_maps, grid_idxs,
 
         t_loss_M = t_loss_M.to(torch.float32)
         t_loss = torch.sum(t_loss_M, dim=1)  # Shape: [batch_size]
+        complemented_t_loss = num_p - t_loss # Since we need to maximize the traversability
+
 
         # Perform grid sampling for risk
         r_loss_M = F.grid_sample(
@@ -86,16 +88,16 @@ def CostofTraj(waypoints, desired_wp, goals, grid_maps, grid_idxs,
 
 
     # Total Cost per sample
-    total_cost_per_sample = alpha * t_loss + beta * r_loss + epsilon * mloss +  delta * gloss  # Shape: [batch_size]
+    total_cost_per_sample = alpha * complemented_t_loss + beta * r_loss + epsilon * mloss +  delta * gloss  # Shape: [batch_size]
     total_cost = torch.mean(total_cost_per_sample)  # Scalar
 
     # Compute means of individual losses
-    t_loss_mean = t_loss.mean()
+    complemented_t_loss_mean = complemented_t_loss.mean()
     r_loss_mean = r_loss.mean()
     mloss_mean = mloss.mean()
     gloss_mean = gloss.mean()
 
-    return total_cost, t_loss_mean, r_loss_mean, mloss_mean, gloss_mean
+    return total_cost, complemented_t_loss_mean, r_loss_mean, mloss_mean, gloss_mean
 
 
 def TransformPoints2Grid(waypoints, t_cam_to_world_tensor, t_world_to_grid_tensor):
@@ -192,16 +194,16 @@ def prepare_data_for_plotting(waypoints, goal_position, center_position, grid_ma
 
     device = grid_map.device
 
-    _, length_x, length_y = grid_map.shape
+    _, _, length_x, length_y = grid_map.shape
 
     start_position = torch.tensor([0.0, 0.0, 0.0], device=device)
 
     # prepare data for fuctions:
     start = start_position.unsqueeze(0).unsqueeze(0)
-    t_cam_to_world_params = t_cam_to_world_SE3.unsqueeze(0)
-    t_world_to_grid_params = t_world_to_grid_SE3.unsqueeze(0)
-    goal = goal_position.unsqueeze(0).unsqueeze(0)
-    center_xy = center_position.unsqueeze(0)
+    t_cam_to_world_params = t_cam_to_world_SE3
+    t_world_to_grid_params = t_world_to_grid_SE3
+    goal = goal_position.unsqueeze(1)
+    center_xy = center_position
 
     transformed_start = TransformPoints2Grid(start, t_cam_to_world_params, t_world_to_grid_params)
     transformed_waypoints = TransformPoints2Grid(waypoints, t_cam_to_world_params, t_world_to_grid_params)
@@ -211,8 +213,8 @@ def prepare_data_for_plotting(waypoints, goal_position, center_position, grid_ma
     waypoints_idxs = Pos2Ind(transformed_waypoints, length_x, length_y, center_xy, voxel_size, device)
     goal_idx = Pos2Ind(transformed_goal, length_x, length_y, center_xy, voxel_size, device)
     
-    start_idx_sqz = start_idx.squeeze(0).squeeze(0)
-    waypoints_idxs_sqz = waypoints_idxs.squeeze(0)
-    goal_idx_sqz = goal_idx.squeeze(0).squeeze(0)
+    start_idx_sqz = start_idx.squeeze(0)
+    waypoints_idxs_sqz = waypoints_idxs
+    goal_idx_sqz = goal_idx.squeeze(0)
 
     return start_idx_sqz, waypoints_idxs_sqz, goal_idx_sqz
