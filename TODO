@@ -1,13 +1,17 @@
-Improve Traversabiliy Loss: Check how to invert or even see if regeneration of data is necessary.
-Check the mismatch of Risk and Depth image:
+Improve Traversabiliy Loss: Check how to invert or even see if regeneration of data is necessary
+Check the mismatch of Risk and Depth image
 Use prepare data function instead of code in training and evaluation!: Done
 Vladitation:
     - Compare loss to:
-        - iPlanner (no Risk Image)
+        - iPlanner (no Risk Image): Done
         - Mission (Path): Done
     - Get random goal selection in a cone and add fear loss to see how it performs there.
     - Load random data from from the internet or see if Taka can provide some.
 If Time:
     - Try out different network
-    - Try different dataset
+    - Try different dataset: Done
     - Add data generation to repository
+
+Versicherung abgeben!
+
+cam to base transform aus dataset entfernen

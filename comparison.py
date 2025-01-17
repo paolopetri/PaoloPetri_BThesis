@@ -1,20 +1,18 @@
 import torch
 from torch.utils.data import DataLoader, Subset
 import pypose as pp
-import matplotlib.pyplot as plt
 
 from dataset import MapDataset
-from utils_viz import TrajViz, comparison_plot_on_map, create_gif_from_figures, plot_loss_comparison
+from utils_viz import comparison_plot_on_map, create_gif_from_figures, plot_loss_comparison
 from utils import CostofTraj, prepare_data_for_plotting
 from planner_net import PlannerNet
 from iplanner_planner_net import iPlannerPlannerNet
 from traj_opt import TrajOpt  
 
 def main():
-    data_root = 'TrainingData'
+    data_root = 'TrainingData/Important'
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    # 1) Create dataset
     dataset = MapDataset(
         data_root=data_root,
         transform=None,
@@ -23,7 +21,7 @@ def main():
 
     robot_path = dataset.t_cam_to_world_SE3
 
-    snippet_indices = range(350, 350 + 1024)
+    snippet_indices = range(0, 1517 - 31)
     subset_dataset = Subset(dataset, snippet_indices)
 
     comp_loader = DataLoader(
@@ -40,7 +38,7 @@ def main():
     epsilon = 1.0
     delta = 1.0
 
-    best_model_path = "checkpoints/offset.pth"
+    best_model_path = "checkpoints/best_model.pth"
     checkpoint = torch.load(best_model_path, map_location=device)
     model.load_state_dict(checkpoint)
     print(f"Loaded best model from {best_model_path}")
@@ -49,7 +47,7 @@ def main():
 
     voxel_size = 0.15
 
-    loss_components = ['total', 'tloss', 'rloss', 'mloss', 'gloss']
+    loss_components = ['Total Loss', 'Traversability Loss', 'Risk Loss', 'Motion Loss', 'Goal Loss']
 
     model1_losses = { comp: [] for comp in loss_components }
     model2_losses = { comp: [] for comp in loss_components }
@@ -57,7 +55,7 @@ def main():
 
     with torch.no_grad():
         for i, sample in enumerate(comp_loader):
-            # Data preparation as before
+
             grid_map = sample['grid_map'].to(device)
             center_position = sample['center_position'].to(device)
             t_cam_to_world_SE3 = sample['t_cam_to_world_SE3'].to(device)
@@ -76,9 +74,6 @@ def main():
 
             _, _, length_x, length_y = grid_map.shape
 
-            # transformed_waypoints = TransformPoints2Grid(waypoints, t_cam_to_world_SE3, t_world_to_grid_SE3)  # (batch, num_waypoints, 3)
-            # grid_idxs = Pos2Ind(transformed_waypoints, length_x, length_y, center_position, voxel_size, device)  # (batch, num_waypoints)
-
             start_idxs, grid_idxs, goal_idxs = prepare_data_for_plotting(waypoints, goal_position, center_position, grid_map, t_cam_to_world_SE3, t_world_to_grid_SE3, voxel_size)
             
             mission_waypoints = gen_mission_waypoints(start_idx_tensor, num_p, ahead = 30, complete_path = robot_path)
@@ -93,7 +88,6 @@ def main():
             
             _, mission_grid_idxs, _ = prepare_data_for_plotting(mission_waypoints_cam, goal_position, center_position, grid_map, t_cam_to_world_SE3, t_world_to_grid_SE3, voxel_size)
 
-            # Visualize both trajectories on the maps
             figs = comparison_plot_on_map(start_idxs, grid_idxs, mission_grid_idxs, goal_idxs, grid_map, "LMM Nav", "Mission Nav")
             output_path = f"output/Comparison/Mission/GIF/{i}.gif"
             create_gif_from_figures(figs, output_path, fps = 2)
@@ -133,18 +127,18 @@ def main():
             )
 
             # Collect losses for Model 1
-            model1_losses['total'].append(total_loss.item())
-            model1_losses['tloss'].append(tloss.item())
-            model1_losses['rloss'].append(rloss.item())
-            model1_losses['mloss'].append(mloss.item())
-            model1_losses['gloss'].append(gloss.item())
+            model1_losses['Total Loss'].append(total_loss.item())
+            model1_losses['Traversability Loss'].append(tloss.item())
+            model1_losses['Risk Loss'].append(rloss.item())
+            model1_losses['Motion Loss'].append(mloss.item())
+            model1_losses['Goal Loss'].append(gloss.item())
 
             # Collect losses for Model 2
-            model2_losses['total'].append(mission_total_loss.item())
-            model2_losses['tloss'].append(mission_tloss.item())
-            model2_losses['rloss'].append(mission_rloss.item())
-            model2_losses['mloss'].append(mission_mloss.item())
-            model2_losses['gloss'].append(mission_gloss.item())
+            model2_losses['Total Loss'].append(mission_total_loss.item())
+            model2_losses['Traversability Loss'].append(mission_tloss.item())
+            model2_losses['Risk Loss'].append(mission_rloss.item())
+            model2_losses['Motion Loss'].append(mission_mloss.item())
+            model2_losses['Goal Loss'].append(mission_gloss.item())
 
             print(f"[Batch Mission {i}] - Processed {len(figs)} images.")
     for comp in loss_components:

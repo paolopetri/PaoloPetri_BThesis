@@ -365,7 +365,7 @@ def create_gif_from_figures(
         plt.close(fig)
 
     # Save frames as a GIF
-    imageio.mimsave(output_path, frames, fps=fps)
+    imageio.mimsave(output_path, frames, fps=fps, loop=0)
 
    
 # ---------------------------------------------------------------------

@@ -1,6 +1,6 @@
 import torch
 from torch import optim
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, random_split, ConcatDataset
 import torchvision.transforms as transforms
 import wandb
 from tqdm import tqdm
@@ -16,7 +16,7 @@ def main():
     wandb.init(
         project="navigation_model",
         config={
-            "num_epochs": 20,
+            "num_epochs": 40,
             "batch_size": 64,
             "num_workers": 8,
             "learning_rate": 1e-4,
@@ -25,10 +25,11 @@ def main():
             "knodes": 5,
             "step": 1.0,
             "voxel_size": 0.15,
-            "alpha": 1.0,
-            "beta": 1.0,
-            "epsilon": 1.0,
-            "delta": 8.0
+            "alpha": 1.0,       # Traversability weight
+            "beta": 3.0,        # Risk weight
+            "epsilon": 1.0,     # Motion weight
+            "delta": 8.0,       # Goal weight
+            "min_gamma": 1e-2   # Minimum improvement in validation loss to save the model
         }
     )
     config = wandb.config
@@ -51,13 +52,17 @@ def main():
     beta = config.beta
     epsilon = config.epsilon
     delta = config.delta
+    min_gamma = config.min_gamma
 
     # Initialize the dataset with transformations
     transform = transforms.Compose([
         transforms.Resize((360, 640)),
         transforms.ToTensor()
     ])
-    full_dataset = MapDataset(data_root='TrainingData', transform=transform)
+    höngg_data = MapDataset(data_root='TrainingData/Hönggerberg', transform=transform)
+    seealpsee_data = MapDataset(data_root='TrainingData/seealpsee', transform=transform)
+    in2out1_data = MapDataset(data_root='TrainingData/in-to-out-1', transform=transform)
+    full_dataset = ConcatDataset([höngg_data, seealpsee_data, in2out1_data])
 
     # Define validation split ratio
     val_split = 0.3
@@ -129,7 +134,7 @@ def main():
             desired_wp = traj_opt.TrajGeneratorFromPFreeRot(goal_position[:, None, 0:3], step=1.0/(num_p-1))
 
             _, _, length_x, length_y = grid_map.shape
-
+            
             transformed_waypoints = TransformPoints2Grid(waypoints, t_cam_to_world_SE3, t_world_to_grid_SE3)  # (batch, num_waypoints, 3)
             grid_idxs = Pos2Ind(transformed_waypoints, length_x, length_y, center_position, voxel_size, device)  # (batch, num_waypoints)
 
@@ -163,7 +168,7 @@ def main():
 
         # Calculate average training loss for the epoch
         avg_train_loss = running_loss / len(train_loader)
-        wandb.log({"epoch": epoch+1, "train_loss": avg_train_loss})
+        wandb.log({"Epoch": epoch+1, "Training Loss": avg_train_loss})
 
         # Validation phase
         model.eval()
@@ -225,15 +230,15 @@ def main():
         avg_mloss = mloss / len(val_loader)
         avg_gloss = gloss / len(val_loader)
 
-        wandb.log({"epoch": epoch+1, "tloss": avg_tloss, "rloss": avg_rloss, "mloss": avg_mloss, "gloss": avg_gloss})
+        wandb.log({"Epoch": epoch+1, "Traversability Loss": avg_tloss, "Risk Loss": avg_rloss, "Motion Loss": avg_mloss, "Goal Loss": avg_gloss})
 
         avg_val_loss = val_loss / len(val_loader)
-        wandb.log({"epoch": epoch+1, "validation_loss": avg_val_loss})
+        wandb.log({"Epoch": epoch+1, "Validation Loss": avg_val_loss})
 
         print(f"Epoch [{epoch+1}/{num_epochs}] Training Loss: {avg_train_loss:.4f} Validation Loss: {avg_val_loss:.4f}")
 
         # Checkpointing: Save the model if validation loss has decreased
-        if avg_val_loss < best_val_loss:
+        if best_val_loss - avg_val_loss > min_gamma:
             best_val_loss = avg_val_loss
             torch.save(model.state_dict(), "checkpoints/best_model.pth")
             wandb.save("checkpoints/best_model.pth")
