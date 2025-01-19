@@ -11,7 +11,7 @@ parameters:
   num_workers:
     values: [4, 8]
   optimizer:
-    values: ["adam", "adamw"]
+    value: "adamw"
   learning_rate:
     distribution: uniform
     min: 1e-5
@@ -21,7 +21,7 @@ parameters:
   encoder_channel:
     values: [16, 32]
   knodes:
-    values: [5]
+    value: 5
   ahead_dist:
     value: 2.0
   trav_threshold:
