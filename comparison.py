@@ -21,7 +21,8 @@ def main():
 
     robot_path = dataset.t_cam_to_world_SE3
 
-    snippet_indices = range(0, 1517 - 31)
+    snippet_indices = range(132 + 48, 228 - 16)
+    #snippet_indices = range(0, 1517 - 31)
     subset_dataset = Subset(dataset, snippet_indices)
 
     comp_loader = DataLoader(
@@ -74,7 +75,13 @@ def main():
 
             _, _, length_x, length_y = grid_map.shape
 
-            start_idxs, grid_idxs, goal_idxs = prepare_data_for_plotting(waypoints, goal_position, center_position, grid_map, t_cam_to_world_SE3, t_world_to_grid_SE3, voxel_size)
+            start_idxs, grid_idxs, goal_idxs = prepare_data_for_plotting(waypoints,
+                                                                         goal_position,
+                                                                         center_position,
+                                                                         grid_map,
+                                                                         t_cam_to_world_SE3,
+                                                                         t_world_to_grid_SE3,
+                                                                         voxel_size)
             
             mission_waypoints = gen_mission_waypoints(start_idx_tensor, num_p, ahead = 30, complete_path = robot_path)
 
@@ -86,7 +93,12 @@ def main():
 
             mission_waypoints_cam = mission_waypoints_cam_SE3.translation()
             
-            _, mission_grid_idxs, _ = prepare_data_for_plotting(mission_waypoints_cam, goal_position, center_position, grid_map, t_cam_to_world_SE3, t_world_to_grid_SE3, voxel_size)
+            _, mission_grid_idxs, _ = prepare_data_for_plotting(mission_waypoints_cam,
+                                                                 goal_position,
+                                                                 center_position,
+                                                                 grid_map, t_cam_to_world_SE3,
+                                                                 t_world_to_grid_SE3,
+                                                                 voxel_size)
 
             figs = comparison_plot_on_map(start_idxs, grid_idxs, mission_grid_idxs, goal_idxs, grid_map, "LMM Nav", "Mission Nav")
             output_path = f"output/Comparison/Mission/GIF/{i}.gif"
@@ -94,7 +106,7 @@ def main():
             
             
             # Calculate the trajectory cost
-            total_loss, tloss, rloss, mloss, gloss = CostofTraj(
+            total_loss, tloss, rloss, mloss, gloss, _ = CostofTraj(
                 waypoints=waypoints,
                 desired_wp = desired_wp,
                 goals=goal_position,
@@ -110,7 +122,7 @@ def main():
                 is_map=True
             )
             
-            mission_total_loss, mission_tloss, mission_rloss, mission_mloss, mission_gloss = CostofTraj(
+            mission_total_loss, mission_tloss, mission_rloss, mission_mloss, mission_gloss, _ = CostofTraj(
                 waypoints=mission_waypoints_cam,
                 desired_wp = desired_wp,
                 goals=goal_position,
@@ -205,7 +217,7 @@ def main():
             create_gif_from_figures(figs, output_path, fps = 2)
 
             # Calculate the trajectory cost for iPlanner
-            iplanner_total_loss, iplanner_tloss, iplanner_rloss, iplanner_mloss, iplanner_gloss = CostofTraj(
+            iplanner_total_loss, iplanner_tloss, iplanner_rloss, iplanner_mloss, iplanner_gloss, _ = CostofTraj(
                 waypoints=iplanner_waypoints,
                 desired_wp = desired_wp,
                 goals=goal_position,
@@ -222,11 +234,11 @@ def main():
             )
 
             # Collect losses for iPlanner
-            model2_losses['total'].append(iplanner_total_loss.item())
-            model2_losses['tloss'].append(iplanner_tloss.item())
-            model2_losses['rloss'].append(iplanner_rloss.item())
-            model2_losses['mloss'].append(iplanner_mloss.item())
-            model2_losses['gloss'].append(iplanner_gloss.item())
+            model2_losses['Total Loss'].append(iplanner_total_loss.item())
+            model2_losses['Traversability Loss'].append(iplanner_tloss.item())
+            model2_losses['Risk Loss'].append(iplanner_rloss.item())
+            model2_losses['Motion Loss'].append(iplanner_mloss.item())
+            model2_losses['Goal Loss'].append(iplanner_gloss.item())
 
             print(f"[Batch iPlanner {i}] - Processed {len(figs)} images.")
     for comp in loss_components:

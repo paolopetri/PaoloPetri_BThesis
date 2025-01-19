@@ -1,6 +1,7 @@
 Improve Traversabiliy Loss: Check how to invert or even see if regeneration of data is necessary
 Check the mismatch of Risk and Depth image
 Use prepare data function instead of code in training and evaluation!: Done
+Add ReadMe
 Vladitation:
     - Compare loss to:
         - iPlanner (no Risk Image): Done
@@ -13,5 +14,8 @@ If Time:
     - Add data generation to repository
 
 Versicherung abgeben!
+
+install.md verändern
+alles in lmmnav hinzufügen
 
 cam to base transform aus dataset entfernen

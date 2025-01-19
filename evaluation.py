@@ -11,7 +11,7 @@ from planner_net import PlannerNet
 from traj_opt import TrajOpt  
 
 def main():
-    data_root = 'TrainingData'
+    data_root = 'TrainingData/seealpsee'
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # 1) Create dataset

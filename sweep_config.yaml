@@ -1,0 +1,43 @@
+program: train.py
+method: bayes
+metric:
+  name: Validation Loss
+  goal: minimize
+parameters:
+  num_epochs:
+    value: 60
+  batch_size:
+    values: [32, 64, 128]
+  num_workers:
+    values: [4, 8]
+  optimizer:
+    values: ["adam", "adamw"]
+  learning_rate:
+    distribution: uniform
+    min: 1e-5
+    max: 1e-3
+  weight_decay:
+    values: [1e-4, 5e-4, 1e-3]
+  encoder_channel:
+    values: [16, 32]
+  knodes:
+    values: [5]
+  ahead_dist:
+    value: 2.0
+  trav_threshold:
+    value: 0.5
+  risk_threshold:
+    value: 0.5
+  # Fix loss weights or keep narrow ranges at first
+  fear_weight:
+    value: 0.5
+  alpha:
+    value: 0.5
+  beta:
+    value: 3.5
+  epsilon:
+    value: 1.0
+  delta:
+    value: 4.0
+  min_gamma:
+    value: 0.001

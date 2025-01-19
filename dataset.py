@@ -156,8 +156,17 @@ class MapDataset(Dataset):
         depth_dir = os.path.join(self.data_root, 'depth_images')
         risk_dir = os.path.join(self.data_root, 'risk_images')
 
+        risk_files = [f for f in os.listdir(risk_dir) if f.endswith('.npy')]
+        total_risk_images = len(risk_files)
+
+        # Calculate the intended risk index (2 steps ahead of depth) missmatch in generation!
+        intended_risk_idx = idx + 2
+        # Clip the risk index so it does not exceed the maximum available index
+        max_valid_index = total_risk_images - 1
+        risk_idx = min(intended_risk_idx, max_valid_index)
+
         depth_path = os.path.join(depth_dir, f'{idx}.npy')
-        risk_path = os.path.join(risk_dir, f'{idx}.npy')
+        risk_path = os.path.join(risk_dir, f'{risk_idx}.npy') # Risk image is 2 steps ahead
 
         depth_image = np.load(depth_path)  # Shape: (1280, 1920)
         risk_image = np.load(risk_path)    # Shape: (427, 640, 3)

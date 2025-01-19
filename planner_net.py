@@ -36,7 +36,7 @@ class Decoder(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
         self.conv1 = nn.Conv2d((in_channels + goal_channels), 512, kernel_size=5, stride=1, padding=1)
-        self.conv2 = nn.Conv2d(512, 256, kernel_size=3, stride=1, padding=0);
+        self.conv2 = nn.Conv2d(512, 256, kernel_size=3, stride=1, padding=0)
 
         self.fc1   = nn.Linear(256 * 128, 1024) 
         self.fc2   = nn.Linear(1024, 512)

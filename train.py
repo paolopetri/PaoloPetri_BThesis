@@ -1,7 +1,10 @@
 import torch
 from torch import optim
 from torch.utils.data import DataLoader, random_split, ConcatDataset
+import torch.nn.functional as F
 import torchvision.transforms as transforms
+
+import argparse
 import wandb
 from tqdm import tqdm
 # Import your dataset and other modules
@@ -10,44 +13,78 @@ from planner_net import PlannerNet
 from utils import CostofTraj, TransformPoints2Grid, Pos2Ind
 from traj_opt import TrajOpt
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train PlannerNet with wandb sweeps.")
+    # General training hyperparameters
+    parser.add_argument('--num_epochs', type=int, default=60)
+    parser.add_argument('--batch_size', type=int, default=128)
+    parser.add_argument('--num_workers', type=int, default=8)
+    parser.add_argument('--optimizer', type=str, default='adamw')
+    parser.add_argument('--learning_rate', type=float, default=1.5e-4)
+    parser.add_argument('--weight_decay', type=float, default=1e-4)
+    parser.add_argument('--encoder_channel', type=int, default=16)
+    parser.add_argument('--knodes', type=int, default=5)
+    # Additional hyperparameters
+    parser.add_argument('--ahead_dist', type=float, default=2.0)
+    parser.add_argument('--trav_threshold', type=float, default=0.5)
+    parser.add_argument('--risk_threshold', type=float, default=0.5)
+    parser.add_argument('--fear_weight', type=float, default=0.5)
+    parser.add_argument('--alpha', type=float, default=0.5)
+    parser.add_argument('--beta', type=float, default=3.5)
+    parser.add_argument('--epsilon', type=float, default=1.0)
+    parser.add_argument('--delta', type=float, default=4.0)
+    parser.add_argument('--min_gamma', type=float, default=1e-2)
+    return parser.parse_args()
+
 def main():
     print("Training script started.")
     # Initialize wandb
+    args = parse_args()
     wandb.init(
-        project="navigation_model",
-        config={
-            "num_epochs": 40,
-            "batch_size": 64,
-            "num_workers": 8,
-            "learning_rate": 1e-4,
-            "weight_decay": 1e-5,
-            "encoder_channel": 16,
-            "knodes": 5,
-            "step": 1.0,
-            "voxel_size": 0.15,
-            "alpha": 1.0,       # Traversability weight
-            "beta": 3.0,        # Risk weight
-            "epsilon": 1.0,     # Motion weight
-            "delta": 8.0,       # Goal weight
-            "min_gamma": 1e-2   # Minimum improvement in validation loss to save the model
-        }
+        project="LMM_Navigation",
+        config = {
+            "num_epochs": args.num_epochs,
+            "batch_size": args.batch_size,
+            "num_workers": args.num_workers,
+            "optimizer": args.optimizer,
+            "learning_rate": args.learning_rate,
+            "weight_decay": args.weight_decay,
+            "encoder_channel": args.encoder_channel,
+            "knodes": args.knodes,
+            "ahead_dist": args.ahead_dist,
+            "trav_threshold": args.trav_threshold,
+            "risk_threshold": args.risk_threshold,
+            "fear_weight": args.fear_weight,
+            "alpha": args.alpha,
+            "beta": args.beta,
+            "epsilon": args.epsilon,
+            "delta": args.delta,
+            "min_gamma": args.min_gamma
+            }
     )
     config = wandb.config
 
     # Device configuration
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
+    
+    voxel_size = 0.15
+    step = 0.1
+
 
     # Hyperparameters
     num_epochs = config.num_epochs
     batch_size = config.batch_size
     num_workers = config.num_workers
+    optimizer_type = config.optimizer
     learning_rate = config.learning_rate
     weight_decay = config.weight_decay
     encoder_channel = config.encoder_channel
     knodes = config.knodes
-    step = config.step
-    voxel_size = config.voxel_size
+    ahead_dist = config.ahead_dist
+    trav_threshold = config.trav_threshold
+    risk_threshold = config.risk_threshold
+    fear_weight = config.fear_weight
     alpha = config.alpha
     beta = config.beta
     epsilon = config.epsilon
@@ -96,8 +133,13 @@ def main():
     # Initialize the model, optimizer, and scheduler
     model = PlannerNet(encoder_channel, knodes).to(device)
     traj_opt = TrajOpt()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
+
+    if optimizer_type == 'adam':
+        optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    elif optimizer_type == 'adamw':
+        optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
+
 
     # Watch the model with wandb
     wandb.watch(model, log="all")
@@ -139,7 +181,7 @@ def main():
             grid_idxs = Pos2Ind(transformed_waypoints, length_x, length_y, center_position, voxel_size, device)  # (batch, num_waypoints)
 
             # Calculate the trajectory cost
-            total_loss, tloss, rloss, mloss, gloss = CostofTraj(
+            total_loss, tloss, rloss, mloss, gloss, fear_labels = CostofTraj(
                 waypoints=waypoints,
                 desired_wp = desired_wp,
                 goals=goal_position,
@@ -148,6 +190,9 @@ def main():
                 length_x=length_x,
                 length_y=length_y,
                 device=device,
+                ahead_dist=ahead_dist,
+                trav_threshold=trav_threshold,
+                risk_threshold=risk_threshold,
                 alpha=alpha,
                 beta=beta,
                 epsilon=epsilon,
@@ -155,13 +200,26 @@ def main():
                 is_map=True
             )
 
+            fear_loss = F.binary_cross_entropy(fear, fear_labels)
+
+            loss = total_loss + fear_weight * fear_loss
             # Backward and optimize
             optimizer.zero_grad()
-            total_loss.backward()
+            loss.backward()
+
+            total_norm = 0.0
+            for p in model.parameters():
+                if p.grad is not None:
+                    param_norm = p.grad.data.norm(2)
+                    total_norm += param_norm.item() ** 2
+            total_norm = total_norm ** 0.5
+
+            wandb.log({"Epoch": epoch+1, "Total Gradient Norm": total_norm})
+
             optimizer.step()
 
-            running_loss += total_loss.item()
-            train_bar.set_postfix(loss=total_loss.item())
+            running_loss += loss.item()
+            train_bar.set_postfix(loss=loss.item())
 
         # Update learning rate
         scheduler.step()
@@ -204,7 +262,7 @@ def main():
                 grid_idxs = Pos2Ind(transformed_waypoints, length_x, length_y, center_position, voxel_size, device)  # (batch, num_waypoints)
 
                 # Calculate the trajectory cost
-                total_loss, tloss, rloss, mloss, gloss = CostofTraj(
+                total_loss, tloss, rloss, mloss, gloss, fear_labels = CostofTraj(
                     waypoints=waypoints,
                     desired_wp = desired_wp,
                     goals=goal_position,
@@ -213,15 +271,21 @@ def main():
                     length_x=length_x,
                     length_y=length_y,
                     device=device,
+                    ahead_dist=ahead_dist,
+                    trav_threshold=trav_threshold,
+                    risk_threshold=risk_threshold,
                     alpha=alpha,
                     beta=beta,
                     epsilon=epsilon,
                     delta=delta,
                     is_map=True
                 )
+                floss = F.binary_cross_entropy(fear, fear_labels)
 
-                val_loss += total_loss.item()
-                val_bar.set_postfix(loss=total_loss.item())
+                loss = total_loss + fear_weight * floss
+
+                val_loss += loss.item()
+                val_bar.set_postfix(loss=loss.item())
 
 
         # Calculate average validation loss for the epoch
@@ -229,11 +293,16 @@ def main():
         avg_rloss = rloss / len(val_loader)
         avg_mloss = mloss / len(val_loader)
         avg_gloss = gloss / len(val_loader)
-
-        wandb.log({"Epoch": epoch+1, "Traversability Loss": avg_tloss, "Risk Loss": avg_rloss, "Motion Loss": avg_mloss, "Goal Loss": avg_gloss})
-
+        avg_floss = floss / len(val_loader)
         avg_val_loss = val_loss / len(val_loader)
-        wandb.log({"Epoch": epoch+1, "Validation Loss": avg_val_loss})
+        
+        wandb.log({"Epoch": epoch+1,
+                   "Traversability Loss": avg_tloss * alpha,
+                   "Risk Loss": avg_rloss * beta,
+                   "Motion Loss": avg_mloss * epsilon,
+                   "Goal Loss": avg_gloss * delta,
+                   "Fear Loss": avg_floss * fear_weight,
+                   "Validation Loss": avg_val_loss})
 
         print(f"Epoch [{epoch+1}/{num_epochs}] Training Loss: {avg_train_loss:.4f} Validation Loss: {avg_val_loss:.4f}")
 
