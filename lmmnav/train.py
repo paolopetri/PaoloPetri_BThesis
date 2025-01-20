@@ -5,13 +5,22 @@ import torch.nn.functional as F
 import torchvision.transforms as transforms
 
 import argparse
+import yaml
 import wandb
 from tqdm import tqdm
+from pprint import pprint
 # Import your dataset and other modules
 from dataset import MapDataset
 from planner_net import PlannerNet
 from utils import CostofTraj, TransformPoints2Grid, Pos2Ind
 from traj_opt import TrajOpt
+
+def load_config_from_yaml(yaml_path):
+    with open(yaml_path, 'r') as stream:
+        try:
+            return yaml.safe_load(stream)
+        except yaml.YAMLError as exc:
+            print(exc)
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train PlannerNet with wandb sweeps.")
@@ -34,12 +43,23 @@ def parse_args():
     parser.add_argument('--epsilon', type=float, default=1.0)
     parser.add_argument('--delta', type=float, default=4.0)
     parser.add_argument('--min_gamma', type=float, default=1e-2)
+
+    # New flag to optionally load best config
+    parser.add_argument('--use_best_config', action='store_true', 
+                        help="Flag to override args with best configuration from YAML")
+
+
     return parser.parse_args()
 
 def main():
-    print("Training script started.")
     # Initialize wandb
     args = parse_args()
+
+    if args.use_best_config:
+        best_config = load_config_from_yaml("config/best_config_64_4.yaml")
+        for key, value in best_config.items():
+            setattr(args, key, value)
+
     wandb.init(
         project="LMM_Navigation",
         config = {
@@ -63,6 +83,8 @@ def main():
             }
     )
     config = wandb.config
+    print("Training script started with the following configuration:")
+    pprint(dict(config), sort_dicts=False)
 
     # Device configuration
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

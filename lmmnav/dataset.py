@@ -233,7 +233,7 @@ class MapDataset(Dataset):
         # t_cam_to_base = torch.tensor([0.001, 0.197, -0.432, 0.544, 0.544, -0.453, 0.451], dtype=torch.float32, device=self.device) # cam2base
         # t_cam_to_base = torch.tensor([-0.460, -0.002, 0.115, 0.544, 0.544, -0.453, -0.451], dtype=torch.float32, device=self.device) # base2cam
         t_cam_to_base = torch.tensor([0.4, 0, 0, 0, 0, 0, 1], dtype=torch.float32, device=self.device) # Shape: [7] # Offset
-  
+        # t_cam_to_base = torch.tensor([0, 0, 0, 0, 0, 0, 1], dtype=torch.float32, device=self.device) # Shape: [7] # identity
         t_cam_to_base_batch = pp.SE3(t_cam_to_base.unsqueeze(0).repeat(t_base_to_world.shape[0], 1))  # Shape: [num_samples, 7]
 
         t_cam_to_world_SE3 = t_base_to_world_SE3 @ t_cam_to_base_batch  # Shape: [num_samples, 7]
