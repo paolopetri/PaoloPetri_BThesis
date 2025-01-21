@@ -16,6 +16,14 @@ If Time:
 Versicherung abgeben!
 
 install.md verändern
-alles in lmmnav hinzufügen
 
 cam to base transform aus dataset entfernen
+
+Check if trainined on new data if it avoids the dummy?
+
+Today:
+- Versicherung abgeben!
+- Check what to do with the indoor data!
+- Set validation cases
+- optimize relative weights set up sweep random virables and see how the plots change.
+

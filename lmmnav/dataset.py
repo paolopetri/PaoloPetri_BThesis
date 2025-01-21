@@ -119,6 +119,8 @@ class MapDataset(Dataset):
         traversability_map = np.loadtxt(traversability_file, delimiter=',').T
         risk_map = np.loadtxt(risk_file, delimiter=',').T
 
+        traversability_map = 1 - traversability_map  # Invert the traversability map
+
         traversability_map_smoothed = gaussian_filter(traversability_map, sigma=sigma)
         risk_map_smoothed = gaussian_filter(risk_map, sigma)
 

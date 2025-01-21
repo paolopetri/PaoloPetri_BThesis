@@ -54,10 +54,7 @@ def CostofTraj(waypoints, desired_wp, goals, grid_maps, grid_idxs,
         ).squeeze(1).squeeze(2)  # Shape: [batch_size, num_p]
 
         t_loss_M = t_loss_M.to(torch.float32)#
-        complemented_t_loss_M = 1 - t_loss_M
         t_loss = torch.sum(t_loss_M, dim=1)  # Shape: [batch_size]
-        complemented_t_loss = num_p - t_loss # Since we need to maximize the traversability
-
 
         # Perform grid sampling for risk
         r_loss_M = F.grid_sample(
@@ -89,18 +86,18 @@ def CostofTraj(waypoints, desired_wp, goals, grid_maps, grid_idxs,
 
 
     # Total Cost per sample
-    total_cost_per_sample = alpha * complemented_t_loss + beta * r_loss + epsilon * mloss +  delta * gloss  # Shape: [batch_size]
+    total_cost_per_sample = alpha * t_loss + beta * r_loss + epsilon * mloss +  delta * gloss  # Shape: [batch_size]
     total_cost = torch.mean(total_cost_per_sample)  # Scalar
 
     # Compute means of individual losses
-    complemented_t_loss_mean = complemented_t_loss.mean()
+    t_loss_mean = t_loss.mean()
     r_loss_mean = r_loss.mean()
     mloss_mean = mloss.mean()
     gloss_mean = gloss.mean()
 
     # fear labels
     distance_from_start = torch.cumsum(wp_ds, dim=1, dtype=wp_ds.dtype)
-    floss_M = torch.clone(complemented_t_loss_M)[:, 1:]  # using traversability data
+    floss_M = torch.clone(t_loss_M)[:, 1:]  # using traversability data
     floss_M[distance_from_start > ahead_dist] = 0.0
     obstacle_fear = torch.max(floss_M, 1, keepdim=True)[0]
     obstacle_fear = (obstacle_fear > trav_threshold).to(torch.float32)
@@ -114,7 +111,7 @@ def CostofTraj(waypoints, desired_wp, goals, grid_maps, grid_idxs,
     # Combine fear labels
     fear_labels = torch.clamp(obstacle_fear + risk_fear, max=1.0)
 
-    return total_cost, complemented_t_loss_mean, r_loss_mean, mloss_mean, gloss_mean, fear_labels
+    return total_cost, t_loss_mean, r_loss_mean, mloss_mean, gloss_mean, fear_labels
 
 
 def TransformPoints2Grid(waypoints, t_cam_to_world_tensor, t_world_to_grid_tensor):

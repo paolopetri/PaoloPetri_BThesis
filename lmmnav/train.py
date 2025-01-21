@@ -56,7 +56,7 @@ def main():
     args = parse_args()
 
     if args.use_best_config:
-        best_config = load_config_from_yaml("config/best_config_64_4.yaml")
+        best_config = load_config_from_yaml("config/best_config_128_8.yaml")
         for key, value in best_config.items():
             setattr(args, key, value)
 
