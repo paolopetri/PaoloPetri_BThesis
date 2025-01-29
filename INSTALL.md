@@ -42,7 +42,7 @@ As an alternative to the manual installation, you can set up your environment an
 
 1. Create and activate the environment from the `iplanner_env.yml` file using the command:
     ```bash
-    conda env create -f iplanner_env.yml
+    conda env create -f lmmnav_env.yml
     ```
 
 If you encounter any issues during the installation process, please open an issue on the project's GitHub page.

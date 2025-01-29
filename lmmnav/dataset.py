@@ -12,7 +12,7 @@ import numpy as np
 import pypose as pp
 import torchvision.transforms as transforms
 import torchvision.transforms.functional as TF
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, binary_dilation
 
 class MapDataset(Dataset):
     """The MapDataset handles the loading of all necessary data from text and image files, performs necessary
@@ -24,7 +24,7 @@ class MapDataset(Dataset):
         - Transforming start positions from the base link frame to the camera frame.
         - Generating goal positions based on future positions and transforming them into the frame of the starting position.
     """
-    def __init__(self, data_root: str, transform=None, device=None) -> None:
+    def __init__(self, data_root: str, random_goals = False, transform=None, device=None) -> None:
         """
         Initializes the MapDataset by loading all necessary data.
 
@@ -48,7 +48,7 @@ class MapDataset(Dataset):
         
         self.t_cam_to_world_SE3 = self.load_t_cam_to_world_SE3()  # Shape: (num_maps, 7)
         
-        self.goal_positions = self.load_goal_positions()  # Shape: (num_maps, 3)
+        self.goal_positions = self.load_goal_positions(random_goals)  # Shape: (num_maps, 3)
 
         self.t_world_to_grid_SE3 = self.load_world_to_grid_transforms_SE3()  # Shape: (num_maps, 7)
 
@@ -79,8 +79,8 @@ class MapDataset(Dataset):
                 - 't_world_to_grid_SE3': Tensor of shape (7), world to grid transformation parameters.
                 - 'start_idx': Tensor containing the start index for waypoint generation.
         """
-        traversability_map, risk_map = self.load_grid_map(idx)  # Shape: (height, width)
-        grid_map = torch.stack([traversability_map, risk_map], dim=0)  # Shape: (2, H, W)
+        traversability_map, risk_map, elevation_map = self.load_grid_map(idx)  # Shape: (height, width)
+        grid_map = torch.stack([traversability_map, risk_map, elevation_map], dim=0)  # Shape: (2, H, W)
 
         center_position = self.center_positions[idx]
         image_pair = self.load_image_pair(idx)  # Shape: (2, C, 360, 640)
@@ -100,34 +100,71 @@ class MapDataset(Dataset):
         return sample
 
     
-    def load_grid_map(self, idx, sigma=1.0):
-        """
-        Loads traversability and risk grid map into tensors.
+    # def load_grid_map(self, idx, sigma=1.0):
+    #     """
+    #     Loads traversability and risk grid map into tensors.
 
-        Returns:
-            tuple:
-                - traversability_maps (torch.Tensor): Tensor of shape (num_samples, height, width).
-                - risk_maps (torch.Tensor): Tensor of shape (num_samples, height, width).
-        """
+    #     Returns:
+    #         tuple:
+    #             - traversability_maps (torch.Tensor): Tensor of shape (num_samples, height, width).
+    #             - risk_maps (torch.Tensor): Tensor of shape (num_samples, height, width).
+    #     """
 
+    #     traversability_dir = os.path.join(self.data_root, 'maps', 'traversability')
+    #     risk_dir = os.path.join(self.data_root, 'maps', 'risk')
+
+    #     traversability_file = os.path.join(traversability_dir, f'{idx}.txt')
+    #     risk_file = os.path.join(risk_dir, f'{idx}.txt')
+
+    #     traversability_map = np.loadtxt(traversability_file, delimiter=',').T
+    #     risk_map = np.loadtxt(risk_file, delimiter=',').T
+
+    #     traversability_map = 1 - traversability_map  # Invert the traversability map
+
+    #     traversability_map_smoothed = gaussian_filter(traversability_map, sigma=sigma)
+    #     risk_map_smoothed = gaussian_filter(risk_map, sigma)
+
+    #     traversability_tensor = torch.tensor(traversability_map_smoothed, dtype=torch.float32, device=self.device)
+    #     risk_tensor = torch.tensor(risk_map_smoothed, dtype=torch.float32, device=self.device)
+
+    #     return traversability_tensor, risk_tensor
+
+    def load_grid_map(self, idx, sigma=1.0, dilation_kernel=5, trav_threshold=0.5, risk_threshold=0.5):
+        elevation_dir = os.path.join(self.data_root, 'maps', 'elevation')
         traversability_dir = os.path.join(self.data_root, 'maps', 'traversability')
         risk_dir = os.path.join(self.data_root, 'maps', 'risk')
 
+        elevation_file = os.path.join(elevation_dir, f'{idx}.txt')
         traversability_file = os.path.join(traversability_dir, f'{idx}.txt')
         risk_file = os.path.join(risk_dir, f'{idx}.txt')
 
+        elevation_map = np.loadtxt(elevation_file, delimiter=',').T
         traversability_map = np.loadtxt(traversability_file, delimiter=',').T
         risk_map = np.loadtxt(risk_file, delimiter=',').T
 
-        traversability_map = 1 - traversability_map  # Invert the traversability map
+        traversability_map = 1 - traversability_map
 
-        traversability_map_smoothed = gaussian_filter(traversability_map, sigma=sigma)
-        risk_map_smoothed = gaussian_filter(risk_map, sigma)
+        # # Threshold
+        # trav_bin = (traversability_map > trav_threshold)
+        # risk_bin = (risk_map > risk_threshold)
 
-        traversability_tensor = torch.tensor(traversability_map_smoothed, dtype=torch.float32, device=self.device)
-        risk_tensor = torch.tensor(risk_map_smoothed, dtype=torch.float32, device=self.device)
+        # # Dilation
+        # structure = np.ones((dilation_kernel, dilation_kernel), dtype=bool)
+        # trav_dilated = binary_dilation(trav_bin, structure=structure).astype(np.float32)
+        # risk_dilated = binary_dilation(risk_bin, structure=structure).astype(np.float32)
 
-        return traversability_tensor, risk_tensor
+        # Blur after dilation
+        trav_blurred = gaussian_filter(traversability_map, sigma=sigma)
+        risk_blurred = gaussian_filter(risk_map, sigma=sigma)
+
+        # Convert to tensors
+        elevation_tensor = torch.tensor(elevation_map, dtype=torch.float32, device=self.device)
+        traversability_tensor = torch.tensor(trav_blurred, dtype=torch.float32, device=self.device)
+        risk_tensor = torch.tensor(risk_blurred, dtype=torch.float32, device=self.device)
+
+        return traversability_tensor, risk_tensor, elevation_tensor
+
+
     
     def load_center_positions(self):
         """
@@ -243,7 +280,7 @@ class MapDataset(Dataset):
         return t_cam_to_world_SE3
 
 
-    def load_goal_positions(self):
+    def load_goal_positions(self, random_goals=False):
         """
         Generates goal positions based on the next position after the start position
         and transforms them into the frame of the start position.
@@ -265,6 +302,18 @@ class MapDataset(Dataset):
         transformed_goal_SE3 = t_cam_to_world_SE3.Inv() @ goal_positions_SE3  # Shape: [num_samples]
 
         goal_xyz_SE3 = transformed_goal_SE3.translation()  # Extract positions (x, y, z) from SE3 objects
+
+        if random_goals:
+            # x_offset = torch.empty(num_samples, device=self.device).uniform_(-5.0, 5.0)  # Shape: [num_samples, 1]
+            # z_offset = torch.normal(mean=0.0, std=0.3, size=(num_samples,), device=self.device)  # Shape: [num_samples, 1]
+            # goal_xyz_SE3[:, 0] += x_offset
+            # goal_xyz_SE3[:, 2] += z_offset
+
+            # for offset:
+            x_offset = torch.normal(mean=0.0, std=0.3, size=(num_samples,), device=self.device)  # Shape: [num_samples, 1]
+            y_offset = torch.empty(num_samples, device=self.device).uniform_(-2.0, 2.0)  # Shape: [num_samples, 1]
+            goal_xyz_SE3[:, 0] += x_offset
+            goal_xyz_SE3[:, 1] += y_offset
 
         return goal_xyz_SE3  # Shape: [num_samples, 3]
 

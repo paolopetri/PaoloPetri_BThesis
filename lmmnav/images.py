@@ -2,6 +2,7 @@ import os
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
+from PIL import Image
 
 def ensure_three_channels(image):
     """
@@ -33,12 +34,36 @@ def resize_with_opencv(image, size):
     return resized_image
 
 # Paths to your .npy files; adjust these as necessary
-depth_path = 'TrainingData/Important/depth_images/195.npy'  # example: shape (1280, 1920)
-risk_path = 'TrainingData/Important/risk_images/197.npy'    # example: shape (427, 640, 3)
+depth_path = 'TrainingData/Important/depth_images/220.npy'  # example: shape (1280, 1920)
+risk_path = 'TrainingData/Important/risk_images/874.npy'    # example: shape (427, 640, 3)
 
 # Load images from .npy files
 depth_image = np.load(depth_path)
 risk_image = np.load(risk_path)
+
+print(f"depth_image shape: {depth_image.shape}")
+
+depth_min = np.min(depth_image)
+depth_max = np.max(depth_image)
+depth_normalized = 255 * (depth_image - depth_min) / (depth_max - depth_min)
+depth_normalized = depth_normalized.astype(np.uint8)
+
+# Convert to PIL Image and save
+depth_pil = Image.fromarray(depth_normalized, mode='L')  # 'L' mode for (8-bit pixels, black and white)
+depth_pil.save('depth_image.png')  # Choose desired format
+
+# --- Saving Risk Image (RGB) ---
+
+# Since risk_image values are between 0 and 1, scale to 0-255
+risk_scaled = (risk_image * 255).clip(0, 255).astype(np.uint8)
+
+risk_image_rgb = risk_scaled[..., ::-1]  # Convert BGR to RGB
+
+# Convert to PIL Image and save
+risk_pil = Image.fromarray(risk_scaled, mode='RGB')
+risk_pil.save('risk_image.png')  # Choose desired format
+
+print("Images saved successfully using Pillow.")
 
 # Ensure depth_image has three channels
 depth_image = ensure_three_channels(depth_image)

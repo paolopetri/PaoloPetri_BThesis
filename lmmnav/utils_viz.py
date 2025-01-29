@@ -8,232 +8,364 @@
 # ======================================================================
 
 import os
-import cv2
-import copy
 import torch
-import numpy as np
-import pypose as pp
-import open3d as o3d
-from scipy.spatial.transform import Rotation as R
-import open3d.visualization.rendering as rendering
-from typing import List, Optional
 import matplotlib.pyplot as plt
 import imageio
 import io
 from PIL import Image
+import math
 
-IMAGE_WIDTH = 640
-IMAGE_HEIGHT = 360
-MESH_SIZE = 0.5
-
-class TrajViz:    
-    def __init__(self, root_path: str, cameraTilt: float = 0.0):
-        """
-        Initialize TrajViz class.
-        """
-        intrinsic_path = os.path.join(root_path, "camera_p_resized.txt")
-        self.SetCamera(intrinsic_path)
-        self.camera_tilt = cameraTilt
-
-    def TransformPoints(self, odom: torch.Tensor, points: torch.Tensor) -> pp.SE3:
-        """
-        Transform points in the trajectory.
-        """
-        batch_size, num_p, _ = points.shape
-        world_ps = pp.identity_SE3(batch_size, num_p, device=points.device)
-        world_ps.tensor()[:, :, 0:3] = points
-        world_ps = pp.SE3(odom[:, None, :]) @ pp.SE3(world_ps)
-        return world_ps
+def rotation_x(theta_degrees: float, device=torch.device('cpu')):
+    theta = math.radians(theta_degrees)
+    return torch.tensor([
+        [1, 0,           0          ],
+        [0, math.cos(theta), -math.sin(theta)],
+        [0, math.sin(theta),  math.cos(theta)]
+    ], dtype=torch.float32, device=device)
 
 
-    def SetCamera(self, intrinsic_path: str, img_width: int = IMAGE_WIDTH, img_height: int = IMAGE_HEIGHT):
-        """
-        Set camera parameters.
-        """
-        with open(intrinsic_path) as f:
-            lines = f.readlines()
-            elems = np.fromstring(lines[0][1:-2], dtype=float, sep=', ')
-        K = np.array(elems).reshape(-1, 4)
-        self.camera = o3d.camera.PinholeCameraIntrinsic(img_width, img_height, K[0,0], K[1,1], K[0,2], K[1,2])
+def project_points(points_3d, P):
+    """
+    Projects 3D points onto a 2D image plane using projection matrix P.
 
+    Parameters:
+    - points_3d: (N, 3) tensor of 3D points in camera frame.
+    - P: (3, 4) Projection matrix tensor.
 
-    def VizImages(self, preds: torch.Tensor, waypoints: torch.Tensor, odom: torch.Tensor, goal: torch.Tensor, fear: torch.Tensor, images: torch.Tensor, visual_offset: float = 0.5, mesh_size: float = 0.3, is_shown: bool = True) -> List[np.ndarray]:
-        """
-        Visualize images of the trajectory.
+    Returns:
+    - points_2d: (N, 2) tensor of 2D pixel coordinates.
+    """
+    # Convert to homogeneous coordinates by adding a column of ones
+    num_points = points_3d.shape[0]
+    ones = torch.ones((num_points, 1), dtype=points_3d.dtype, device=points_3d.device)
+    points_homogeneous = torch.cat((points_3d, ones), dim=1)  # Shape: (N, 4)
 
-        Parameters:
-        preds (tensor): Predicted Key points
-        waypoints (tensor): Trajectory waypoints
-        odom (tensor): Odometry data
-        goal (tensor): Goal position
-        fear (tensor): Fear value per waypoint
-        images (tensor): Image data
-        visual_offset (float): Offset for visualizing images
-        mesh_size (float): Size of mesh objects in images
-        is_shown (bool): If True, show images; otherwise, return image list
-        """
-        batch_size, _, _ = waypoints.shape
+    # Apply projection matrix
+    points_projected = P @ points_homogeneous.T  # Shape: (3, N)
 
+    # Avoid division by zero by replacing zeros in the z-component
+    z = points_projected[2, :]
+    z_safe = torch.where(z == 0, torch.tensor(1e-6, dtype=z.dtype, device=z.device), z)
 
-        preds_ws = self.TransformPoints(odom, preds)
-        wp_ws = self.TransformPoints(odom, waypoints)
+    # Normalize by the third (depth) component
+    points_projected /= z_safe
 
-        if goal.shape[-1] != 7:
-            pp_goal = pp.identity_SE3(batch_size, device=goal.device)
-            pp_goal.tensor()[:, 0:3] = goal
-            goal = pp_goal.tensor()
+    # Extract x and y coordinates
+    points_2d = points_projected[:2, :].T  # Shape: (N, 2)
 
-        goal_ws  = pp.SE3(odom) @ pp.SE3(goal)
+    return points_2d
 
-        # Detach to CPU
-        preds_ws = preds_ws.tensor()[:, :, 0:3].cpu().detach().numpy()
-        wp_ws    = wp_ws.tensor()[:, :, 0:3].cpu().detach().numpy()
-        goal_ws  = goal_ws.tensor()[:, 0:3].cpu().detach().numpy()
+def plot_single_waypoints_on_rgb(waypoints_batch, goal_positions_batch, idx, model_name, frame, show=False, save=True, 
+                  output_dir='output/image/single'):
+    """
+    Projects and plots batched 3D waypoints and goal positions onto corresponding 2D images.
 
-        # Adjust height
-        preds_ws[:, :, 2] -= visual_offset
-        wp_ws[:, :, 2]    -= visual_offset
-        goal_ws[:, 2]     -= visual_offset
+    Parameters:
+    - waypoints_batch: (B, N, 3) tensor of 3D waypoints, where B is batch size.
+    - goal_positions_batch: (B, 3) tensor of 3D goal positions, one per batch.
+    - model_name: str, name of the model to include in saved filenames.
+    - idx: list or tensor of length B, specifying image indices.
+    - show: bool, whether to display the plots.
+    - save: bool, whether to save the plots.
+    - output_dir: str, directory to save the plots.
 
-        # Set material shader
-        mtl = o3d.visualization.rendering.MaterialRecord()
-        mtl.base_color = [1.0, 1.0, 1.0, 0.3]
-        mtl.shader = "defaultUnlit"
+    Returns:
+    - figures: list of Matplotlib Figure objects corresponding to each batch.
+    """
+    # Define the projection matrix P as a PyTorch tensor
+    device = waypoints_batch.device
+    P = torch.tensor([
+        859.6767270584465, 0.0, 916.2221759734231, 0.0,
+        0.0, 970.6574047708339, 644.6715355648768, 0.0,
+        0.0, 0.0, 1.0, 0.0
+    ], dtype=torch.float32).reshape(3, 4).to(device)
 
-        # Set meshes
-        small_sphere      = o3d.geometry.TriangleMesh.create_sphere(mesh_size/20.0)  # trajectory points
-        mesh_sphere       = o3d.geometry.TriangleMesh.create_sphere(mesh_size/5.0)  # successful predict points
-        mesh_sphere_fear  = o3d.geometry.TriangleMesh.create_sphere(mesh_size/5.0)  # unsuccessful predict points
-        mesh_box          = o3d.geometry.TriangleMesh.create_box(mesh_size, mesh_size, mesh_size)  # end points
+    print(f"Projection matrix P: {P}")
 
-        # Set colors
-        small_sphere.paint_uniform_color([0.99, 0.2, 0.1])  # green
-        mesh_sphere.paint_uniform_color([0.4, 1.0, 0.1])
-        mesh_sphere_fear.paint_uniform_color([1.0, 0.64, 0.0])
-        mesh_box.paint_uniform_color([1.0, 0.64, 0.1])
-
-        # Init open3D render
-        render = rendering.OffscreenRenderer(self.camera.width, self.camera.height)
-        render.scene.set_background([0.0, 0.0, 0.0, 1.0])  # RGBA
-        render.scene.scene.enable_sun_light(False)
-
-        # compute veretx normals
-        small_sphere.compute_vertex_normals()
-        mesh_sphere.compute_vertex_normals()
-        mesh_sphere_fear.compute_vertex_normals()
-        mesh_box.compute_vertex_normals()
-        
-        wp_start_idx = 1
-        cv_img_list = []
-
-        for i in range(batch_size):
-            # print(f"wp_cam: {waypoints[i, :, :]}")
-            # print(f"wp_ws: {wp_ws[i, :, :]}")
-            # print(f"odom: {odom[i, :]}")
-            # Add geometries
-            gp = goal_ws[i, :]
-
-            # Add goal marker
-            goal_mesh = copy.deepcopy(mesh_box).translate((gp[0]-mesh_size/2.0, gp[1]-mesh_size/2.0, gp[2]-mesh_size/2.0))
-            render.scene.add_geometry("goal_mesh", goal_mesh, mtl)
-
-            # Add predictions
-            for j in range(preds_ws[i, :, :].shape[0]):
-                kp = preds_ws[i, j, :]
-                if fear[i, :] > 0.5:
-                    kp_mesh = copy.deepcopy(mesh_sphere_fear).translate((kp[0], kp[1], kp[2]))
-                else:
-                    kp_mesh = copy.deepcopy(mesh_sphere).translate((kp[0], kp[1], kp[2]))
-                render.scene.add_geometry("keypose"+str(j), kp_mesh, mtl)
-
-            # Add trajectory
-            for k in range(wp_start_idx, wp_ws[i, :, :].shape[0]):
-                wp = wp_ws[i, k, :]
-                wp_mesh = copy.deepcopy(small_sphere).translate((wp[0], wp[1], wp[2]))
-                render.scene.add_geometry("waypoint"+str(k), wp_mesh, mtl)
-
-            # Set cameras
-            self.CameraLookAtPose(odom[i, :], render, self.camera_tilt)
-
-            # Project to image
-            img_o3d = np.asarray(render.render_to_image())
-            mask = (img_o3d < 10).all(axis=2)
-
-            # Attach image
-            c_img = images[i, :, :].expand(3, -1, -1)
-            c_img = c_img.cpu().detach().numpy().transpose(1, 2, 0)
-            c_img = (c_img * 255 / np.max(c_img)).astype('uint8')
-            img_o3d[mask, :] = c_img[mask, :]
-            img_cv2 = cv2.cvtColor(img_o3d, cv2.COLOR_RGBA2BGRA)
-            cv_img_list.append(img_cv2)
-
-            # Visualize image
-            if is_shown: 
-                cv2.imshow("Preview window", img_cv2)
-                cv2.waitKey()
-
-            # Clear render geometry
-            render.scene.clear_geometry()        
-
-        return cv_img_list
+    # Define the rotation matrix R based on the model name
+    if frame == "LLMNav":
+        R = torch.eye(3, dtype=torch.float32).to(device)  # Shape (3,3)
+    elif frame == "iPlanner":
+        R = torch.tensor([
+            [0, 1, 0],
+            [0, 0, -1],
+            [-1, 0, 0]
+        ], dtype=torch.float32).to(device)  # Shape (3,3)
+    else:
+        raise ValueError(f"Unknown model_name: {model_name}. Please use 'LLMNav' or 'iPlanner'.")
     
+    R_tilt = rotation_x(3, device=device) # accounting for camera tilt
 
-    def CameraLookAtPose(self, odom: torch.Tensor, render: o3d.visualization.rendering.OffscreenRenderer, tilt: float) -> None:
-        """
-        Set camera to look at at current odom pose.
+    # R_tilt_ip = rotation_x(4, device=device) # accounting for camera tilt
+   
 
-        Parameters:
-        odom (tensor): Odometry data
-        render (OffscreenRenderer): Renderer object
-        tilt (float): Tilt angle for camera
-        """
-        unit_vec = pp.identity_SE3(device=odom.device)
-        unit_vec.tensor()[0] = -1.0
-        tilt_vec = [0, 0, 0]
-        tilt_vec.extend(list(R.from_euler('y', tilt, degrees=True).as_quat()))
-        tilt_vec = torch.tensor(tilt_vec, device=odom.device, dtype=odom.dtype)
-        target_pose = pp.SE3(odom) @ pp.SE3(tilt_vec) @ unit_vec
-        camera_up = [0, 0, 1]  # camera orientation
-        eye = pp.SE3(odom)
-        eye = eye.tensor()[0:3].cpu().detach().numpy()
-        target = target_pose.tensor()[0:3].cpu().detach().numpy()
-        render.scene.camera.set_projection(self.camera.intrinsic_matrix, 0.1, 100.0, self.camera.width, self.camera.height)
-        render.scene.camera.look_at(target, eye, camera_up)
-        return
+    # Ensure idx is a list
+    if isinstance(idx, torch.Tensor):
+        idx = idx.tolist()
+    if len(waypoints_batch) != len(idx):
+        raise ValueError("The number of waypoints batches must match the number of indices.")
+    if len(waypoints_batch) != len(goal_positions_batch):
+        raise ValueError("The number of waypoints batches must match the number of goal positions.")
 
-    def combinecv(self, listA, listB):
-        """
-        Combines two lists of cv2 images (listA, listB) side-by-side,
-        assuming both images have identical shape (height, width, channels).
-        Returns a new list of cv2 images, each horizontally stacked.
-        """
-        combined_list = []
-        for imgA, imgB in zip(listA, listB):
-            # Direct horizontal stack since shapes match
-            combined = np.hstack((imgA, imgB))
-            combined_list.append(combined)
+    # Create the output directory if saving is enabled
+    if save:
+        os.makedirs(output_dir, exist_ok=True)
 
-        return combined_list
+    figures = []  # List to store Figure objects
 
-    def cv2fig(self, cv_image_list):
-        """
-        Converts each cv2 image in the list into a Matplotlib Figure.
-        Returns a list of Figures.
-        """
-        fig_list = []
-        for cv_img in cv_image_list:
-            fig, ax = plt.subplots(figsize=(6, 3))  # Adjust figure size as desired
-            # OpenCV is BGR(A); Matplotlib expects RGB(A).
-            # If your images are BGRA, convert to RGBA:
-            if cv_img.shape[2] == 4:  # BGRA
-                cv_img_rgb = cv2.cvtColor(cv_img, cv2.COLOR_BGRA2RGBA)
+    # Iterate over each batch of waypoints, goal position, and corresponding index
+    for batch_idx, (waypoints, goal_position, current_idx) in enumerate(zip(waypoints_batch, goal_positions_batch, idx)):
+        # Rotate points to align with the conventional camera coordinate system
+        trajectory_3d_standard = (R @ waypoints.T).T  # Shape: (N, 3)
+        trajectory_3d_standard[0, 1] = 0.3 # set [::1] to 0.3 for iPlanner
+        trajectory_3d_standard = (R_tilt @ trajectory_3d_standard.T).T # R_tilt_ip for iPlanner
+
+        # Rotate goal position
+        goal_3d_standard = (R @ goal_position.unsqueeze(1)).squeeze(1)  # Shape: (3,)
+       
+        goal_3d_standard = (R_tilt @ goal_3d_standard.unsqueeze(1)).squeeze(1)
+
+        # trajectory_3d_standard[-1, 1] = goal_3d_standard[1] for iPlanner, because its height estimation does not work!
+
+        # Define the image path based on the index
+        image_path = f'TrainingData/Important/camera/{current_idx}.png'
+        
+        # Load the image using Matplotlib (remains a NumPy array)
+        try:
+            image = plt.imread(image_path)
+            print(f"[Batch {batch_idx}] Image loaded successfully from {image_path}.")
+        except FileNotFoundError:
+            print(f"[Batch {batch_idx}] Image not found at path: {image_path}")
+            # Create a blank white image for testing purposes
+            image = torch.ones((1280, 1920, 3), dtype=torch.float32).numpy()  # Convert to NumPy for plotting
+            print(f"[Batch {batch_idx}] Using a blank white image for plotting.")
+
+        print(f"Image shape: {image.shape}") # output: (1280, 1920, 3)
+
+
+        # Project the valid 3D waypoints to 2D pixel coordinates
+        trajectory_2d_valid = project_points(trajectory_3d_standard, P)
+
+        # Project the goal position to 2D pixel coordinates
+        goal_2d = project_points(goal_3d_standard.unsqueeze(0), P)  # Shape: (1, 2)
+        goal_2d_np = goal_2d.cpu().numpy()[0]  # Convert to (2,)
+
+        # Convert the projected 2D waypoints to NumPy for plotting
+        trajectory_2d_valid_np = trajectory_2d_valid.cpu().numpy()
+
+
+        # Plot the projected trajectory
+        fig, ax = plt.subplots(figsize=(12, 8))
+        
+        # Display the image
+        ax.imshow(image)
+        
+        # Plot the trajectory points
+        ax.plot(trajectory_2d_valid_np[:, 0], trajectory_2d_valid_np[:, 1], 'ro-', label='Trajectory')
+        
+        # Plot the goal position
+        ax.plot(goal_2d_np[0], goal_2d_np[1], 'bs', label='Goal Position')  # Blue square
+        
+        # Annotate each trajectory point with its index
+        for idx_pt, (x, y) in enumerate(trajectory_2d_valid_np):
+            ax.annotate(f'{idx_pt}', (x, y), textcoords="offset points", xytext=(0, 10), ha='center')
+        
+        
+        ax.set_title(f'{model_name}: Projected Trajectory and Goal onto RGB Image')
+        
+        # Ensure the y-axis is correctly oriented
+        ax.set_xlim(0, image.shape[1])
+        ax.set_ylim(image.shape[0], 0)  # Invert y-axis for correct orientation
+        ax.axis('off')
+        ax.legend()
+        
+        # Save the plot if required
+        if save:
+            save_filename = f"{model_name}_idx{current_idx}.png"
+            save_path = os.path.join(output_dir, save_filename)
+            fig.savefig(save_path, bbox_inches='tight', dpi=300)
+            print(f"[Batch {batch_idx}] Plot saved to {save_path}.")
+        
+        # Show the plot if required
+        if show:
+            plt.show()
+        else:
+            plt.close(fig)  # Close the figure to free memory
+
+        # Append the figure to the list
+        figures.append(fig)
+
+    return figures
+
+
+def plot_waypoints_on_depth_risk(
+    waypoints_batch,
+    goal_positions_batch,
+    depth_images_batch,
+    risk_images_batch,
+    idx,
+    model_name,
+    frame,
+    show=False,
+    save=True,
+    output_dir='output/image/depth_risk'
+):
+    """
+    Projects and plots batched 3D waypoints and goal positions onto corresponding depth and risk images.
+
+    Parameters:
+    - waypoints_batch: (B, N, 3) tensor of 3D waypoints, where B is batch size.
+    - goal_positions_batch: (B, 3) tensor of 3D goal positions, one per batch.
+    - depth_images_batch: (B, 360, 640, 3) tensor or NumPy array of depth images normalized between 0 and 1.
+    - risk_images_batch: (B, 360, 640, 3) tensor or NumPy array of risk images normalized between 0 and 1.
+    - idx: list or tensor of length B, specifying image indices.
+    - model_name: str, name of the model to include in saved filenames.
+    - frame: str, either "LLMNav" or "iPlanner", specifying the frame of reference.
+    - show: bool, whether to display the plots.
+    - save: bool, whether to save the plots.
+    - output_dir: str, directory to save the plots.
+
+    Returns:
+    - figures: list of Matplotlib Figure objects corresponding to each batch.
+    """
+    # Define the projection matrix P as a PyTorch tensor
+    device = waypoints_batch.device
+    P = torch.tensor([
+        286.5589, 0.0, 305.4074, 0.0,
+        0.0, 272.9974, 181.3139, 0.0,
+        0.0, 0.0, 1.0, 0.0
+    ], dtype=torch.float32).reshape(3, 4).to(device)
+
+    # Define the rotation matrix R based on the frame
+    if frame == "LLMNav":
+        R = torch.eye(3, dtype=torch.float32).to(device)  # Shape (3,3)
+    elif frame == "iPlanner":
+        R = torch.tensor([
+            [0, 1, 0],
+            [0, 0, -1],
+            [-1, 0, 0]
+        ], dtype=torch.float32).to(device)  # Shape (3,3)
+    else:
+        raise ValueError(f"Unknown frame: {frame}. Please use 'LLMNav' or 'iPlanner'.")
+    
+    R_tilt = rotation_x(3, device=device) # accounting for camera tilt
+
+    
+     # Ensure idx is a list
+    if isinstance(idx, torch.Tensor):
+        idx = idx.tolist()
+    if len(waypoints_batch) != len(idx):
+        raise ValueError("The number of waypoints batches must match the number of indices.")
+    if len(waypoints_batch) != len(goal_positions_batch):
+        raise ValueError("The number of waypoints batches must match the number of goal positions.")
+    if len(waypoints_batch) != len(depth_images_batch) or len(waypoints_batch) != len(risk_images_batch):
+        raise ValueError("The number of waypoints batches must match the number of depth and risk images.")
+
+    # Create the output directory if saving is enabled
+    if save:
+        os.makedirs(output_dir, exist_ok=True)
+
+    figures = []  # List to store Figure objects
+
+    # Iterate over each batch of waypoints, goal position, depth image, risk image, and corresponding index
+    for batch_idx, (waypoints, goal_position, depth_image, risk_image, current_idx) in enumerate(zip(
+        waypoints_batch, goal_positions_batch, depth_images_batch, risk_images_batch, idx
+    )):
+        # Rotate points to align with the conventional camera coordinate system
+        trajectory_3d_standard = (R @ waypoints.T).T  # Shape: (N, 3)
+        trajectory_3d_standard[0, 1] = 0.3
+        trajectory_3d_standard = (R_tilt @ trajectory_3d_standard.T).T
+
+        # Rotate goal position
+        goal_3d_standard = (R @ goal_position.unsqueeze(1)).squeeze(1)  # Shape: (3,)
+       
+        goal_3d_standard = (R_tilt @ goal_3d_standard.unsqueeze(1)).squeeze(1)
+
+        # Project the valid 3D waypoints to 2D pixel coordinates
+        trajectory_2d_valid = project_points(trajectory_3d_standard, P)
+
+        # Project the goal position to 2D pixel coordinates
+        goal_2d = project_points(goal_3d_standard.unsqueeze(0), P)  # Shape: (1, 2)
+        goal_2d_np = goal_2d.cpu().numpy()[0]  # Convert to (2,)
+
+        # Convert the projected 2D waypoints to NumPy for plotting
+        trajectory_2d_valid_np = trajectory_2d_valid.cpu().numpy()
+
+        # Ensure depth_image and risk_image are NumPy arrays and rearrange dimensions if necessary
+        if torch.is_tensor(depth_image):
+            # Convert from (3, 360, 640) to (360, 640, 3)
+            depth_image_np = depth_image.cpu().numpy().transpose(1, 2, 0)
+        else:
+            # If already a NumPy array, ensure it has the correct shape
+            if depth_image.ndim == 4 and depth_image.shape[0] == 3:
+                depth_image_np = depth_image.transpose(1, 2, 0)
             else:
-                cv_img_rgb = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
-            
-            ax.imshow(cv_img_rgb)
-            ax.axis('off')
-            fig_list.append(fig)
-        return fig_list
+                raise ValueError(f"Depth image has incorrect shape: {depth_image.shape}")
+
+        if torch.is_tensor(risk_image):
+            # Convert from (3, 360, 640) to (360, 640, 3)
+            risk_image_np = risk_image.cpu().numpy().transpose(1, 2, 0)
+        else:
+            # If already a NumPy array, ensure it has the correct shape
+            if risk_image.ndim == 4 and risk_image.shape[0] == 3:
+                risk_image_np = risk_image.transpose(1, 2, 0)
+            else:
+                raise ValueError(f"Risk image has incorrect shape: {risk_image.shape}")
+
+        # Create the figure with two subplots side by side
+        fig, axes = plt.subplots(1, 2, figsize=(12, 6))  # Increased width for better spacing
+
+        # Plot Depth Image on the left
+        ax_depth = axes[0]
+        ax_depth.imshow(depth_image_np)
+        ax_depth.plot(trajectory_2d_valid_np[:, 0], trajectory_2d_valid_np[:, 1], 'ro-', label='Trajectory')
+        ax_depth.plot(goal_2d_np[0], goal_2d_np[1], 'bs', label='Goal Position')  # Blue square
+        ax_depth.set_title('Depth Image', fontsize=14)
+        ax_depth.set_xlim(0, depth_image_np.shape[1])
+        ax_depth.set_ylim(depth_image_np.shape[0], 0)  # Invert y-axis for correct orientation
+        ax_depth.axis('off')
+        ax_depth.legend(loc='upper right')
+
+        # Annotate each trajectory point with its index on Depth Image
+        for idx_pt, (x, y) in enumerate(trajectory_2d_valid_np):
+            ax_depth.annotate(f'{idx_pt}', (x, y), textcoords="offset points", xytext=(0, 10), ha='center', fontsize=8, color='white')
+
+        # Plot Risk Image on the right
+        ax_risk = axes[1]
+        ax_risk.imshow(risk_image_np)
+        ax_risk.plot(trajectory_2d_valid_np[:, 0], trajectory_2d_valid_np[:, 1], 'ro-', label='Trajectory')
+        ax_risk.plot(goal_2d_np[0], goal_2d_np[1], 'bs', label='Goal Position')  # Blue square
+        ax_risk.set_title('Risk Image', fontsize=14)
+        ax_risk.set_xlim(0, risk_image_np.shape[1])
+        ax_risk.set_ylim(risk_image_np.shape[0], 0)  # Invert y-axis for correct orientation
+        ax_risk.axis('off')
+        ax_risk.legend(loc='upper right')
+
+        # Annotate each trajectory point with its index on Risk Image
+        for idx_pt, (x, y) in enumerate(trajectory_2d_valid_np):
+            ax_risk.annotate(f'{idx_pt}', (x, y), textcoords="offset points", xytext=(0, 10), ha='center', fontsize=8)
+
+        # Adjust layout to accommodate the main title and avoid overlap
+        plt.tight_layout(rect=[0, 0, 1, 0.93])
+
+        # Save the plot if required
+        if save:
+            save_filename = f"{model_name}_idx{current_idx}.png"
+            save_path = os.path.join(output_dir, save_filename)
+            fig.savefig(save_path, bbox_inches='tight', dpi=300)
+            print(f"[Batch {batch_idx}] Plot saved to {save_path}.")
+
+        # Show the plot if required
+        if show:
+            plt.show()
+        else:
+            plt.close(fig)  # Close the figure to free memory
+
+        # Append the figure to the list
+        figures.append(fig)
+
+    return figures
+
 
 
 def plot_traj_batch_on_map(
@@ -290,6 +422,7 @@ def plot_traj_batch_on_map(
         ax1.set_title('Traversability Map')
         ax1.set_xlabel('Y-Index')
         ax1.set_ylabel('X-Index')
+        ax1.axis('off')
         ax1.legend()
 
         # Plot the risk map
@@ -300,6 +433,7 @@ def plot_traj_batch_on_map(
         ax2.set_title('Risk Map')
         ax2.set_xlabel('Y-Index')
         ax2.set_ylabel('X-Index')
+        ax2.axis('off')
         ax2.legend()
 
         plt.tight_layout()
@@ -334,11 +468,11 @@ def combine_figures(fig_img: plt.Figure, fig_map: plt.Figure) -> plt.Figure:
 
     axes[0].imshow(pil_img)
     axes[0].axis('off')
-    axes[0].set_title("Figure 1: Trajectory plotted on Depth and Risk Images")
+    axes[0].set_title("Trajectory plotted on Depth and Risk Images")
 
     axes[1].imshow(pil_map)
     axes[1].axis('off')
-    axes[1].set_title("Figure 2: Trajectory plotted on Traversability and Risk Maps")
+    axes[1].set_title("Trajectory plotted on Traversability and Risk Maps")
 
     plt.tight_layout()
     return fig

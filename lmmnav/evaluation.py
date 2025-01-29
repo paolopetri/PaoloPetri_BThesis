@@ -4,14 +4,19 @@ import imageio
 import io
 import matplotlib.pyplot as plt
 
+import numpy as np
+import os
+import pypose as pp
+
 from dataset import MapDataset
-from utils_viz import TrajViz, plot_traj_batch_on_map, combine_figures
+from utils_viz import plot_single_waypoints_on_rgb, plot_waypoints_on_depth_risk, comparison_plot_on_map, plot_traj_batch_on_map, combine_figures
 from utils import prepare_data_for_plotting
 from planner_net import PlannerNet
+from iplanner_planner_net import iPlannerPlannerNet
 from traj_opt import TrajOpt  
 
 def main():
-    data_root = 'TrainingData/seealpsee'
+    data_root = 'TrainingData/Important'
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     # 1) Create dataset
@@ -21,36 +26,38 @@ def main():
         device=device
     )
 
-    snippet_indices = range(350, 382)
+    # snippet_indices = range(190, 194)
+    snippet_indices = range(220, 221)
     subset_dataset = Subset(dataset, snippet_indices)
 
     viz_loader = DataLoader(
         subset_dataset,
-        batch_size=4,
+        batch_size=1,
         shuffle=False,
         num_workers=0
     )
 
     # 4) Load your model
-    model = PlannerNet(16, 5).to(device)
+    model = PlannerNet(32, 5).to(device)
     traj_opt = TrajOpt()
 
-    best_model_path = "checkpoints/best_model.pth"
+    best_model_path = "checkpoints/offset_32.pth"
     checkpoint = torch.load(best_model_path, map_location=device)
     model.load_state_dict(checkpoint)
     print(f"Loaded best model from {best_model_path}")
-
     model.eval()
 
+    iplanner_model = iPlannerPlannerNet(16, 5).to(device)
+    iplanner_model_path = "checkpoints/iplanner.pt"
+    iplanner_checkpoint_tuple = torch.load(iplanner_model_path, map_location=device)
+    loaded_model_instance, some_value = iplanner_checkpoint_tuple
+    state_dict = loaded_model_instance.state_dict()
+    iplanner_model.load_state_dict(state_dict)
+    print(f"Loaded iPlanner model from {iplanner_model_path}")
+    iplanner_model.eval()
+
     # Instantiate visualization
-    viz = TrajViz(root_path=data_root, cameraTilt=-4.0)
     voxel_size = 0.15
-
-    all_out_images = []
-
-    # Open a writer for the final GIF
-    final_output_path = "output/trajectory_combined_final.gif"
-    writer = imageio.get_writer(final_output_path, fps=1)
 
     with torch.no_grad():
         for i, sample in enumerate(viz_loader):
@@ -63,74 +70,85 @@ def main():
             depth_img, risk_img = sample['image_pair']
             depth_img = depth_img.to(device)
             risk_img = risk_img.to(device)
+            idx = sample['start_idx'].to(device)
+            print(f"Goal position: {goal_position}")
 
-            print(f"t_cam_to_world_SE3: {t_cam_to_world_SE3.type()}")
+            goal_position[:,1] += 5.0
+
+            batch_size = depth_img.size(0)
 
             # Forward pass
             preds, fear = model(depth_img, risk_img, goal_position)
-            waypoints = traj_opt.TrajGeneratorFromPFreeRot(preds, step=0.5)
+            waypoints = traj_opt.TrajGeneratorFromPFreeRot(preds, step=1.0)
+            
+            #plot_single_waypoints_on_rgb(waypoints, goal_position, idx, model_name='LLMNav', frame = 'iPlanner', show=True, save=True)
 
-            # Visualization 
-            list_img_depth = viz.VizImages(
-                preds=preds,
-                waypoints=waypoints,
-                odom=t_cam_to_world_SE3,
-                goal=goal_position,
-                fear=fear,
-                images=depth_img,
-                visual_offset=0.4,
-                mesh_size=0.5,
-                is_shown=False
-            )
+            iplanner_preds, iplanner_fear = iplanner_model(depth_img, goal_position)
+            iplanner_waypoints = traj_opt.TrajGeneratorFromPFreeRot(iplanner_preds, step=1.0)
 
-            list_img_risk = viz.VizImages(
-                preds=preds,
-                waypoints=waypoints,
-                odom=t_cam_to_world_SE3,
-                goal=goal_position,
-                fear=fear,
-                images=risk_img,
-                visual_offset=0.4,
-                mesh_size=0.5,
-                is_shown=False
-            )
+            #plot_single_waypoints_on_rgb(iplanner_waypoints, goal_position, idx, model_name = 'iPlanner', frame = 'iPlanner', show=True, save=True)
 
-            list_img_combined = viz.combinecv(list_img_depth, list_img_risk)
-            figs_img = viz.cv2fig(list_img_combined)
+            start_idxs, grid_idxs, goal_idxs = prepare_data_for_plotting(waypoints,
+                                                                         goal_position,
+                                                                         center_position,
+                                                                         grid_map,
+                                                                         t_cam_to_world_SE3,
+                                                                         t_world_to_grid_SE3,
+                                                                         voxel_size)
+            
+            _, iplanner_grid_idxs, _ = prepare_data_for_plotting(iplanner_waypoints,
+                                                                                                     goal_position,
+                                                                                                     center_position,
+                                                                                                     grid_map,
+                                                                                                     t_cam_to_world_SE3,
+                                                                                                     t_world_to_grid_SE3,
+                                                                                                     voxel_size)
+            
+            
+            # figs_comparison = comparison_plot_on_map(start_idxs, grid_idxs, iplanner_grid_idxs, goal_idxs, grid_map, "LMMNav", "iPlanner")
 
-            start_idx, waypoints_idxs, goal_idx = prepare_data_for_plotting(
-                waypoints, goal_position, center_position, grid_map, 
-                t_cam_to_world_SE3, t_world_to_grid_SE3, voxel_size
-            )
+            figs_depth_risk = plot_waypoints_on_depth_risk(waypoints, goal_position, depth_img, risk_img, idx, model_name='LMMNav', frame='iPlanner', show=True, save=True)
 
-            figs_map = plot_traj_batch_on_map(start_idx, waypoints_idxs, goal_idx, grid_map)
+            plt.show()
 
-            # Combine figures and write frames directly to GIF
-            for fig_img, fig_map in zip(figs_img, figs_map):
-                fig_combined = combine_figures(fig_img, fig_map)
 
-                # Convert figure to image data
-                buf = io.BytesIO()
-                fig_combined.savefig(buf, format='png', dpi=100, bbox_inches='tight')
-                buf.seek(0)
-                frame = imageio.imread(buf)
+            print(f"[Batch {i}] - Processed {len(batch_size)} images.")
 
-                writer.append_data(frame)
-
-                # Close figure to free memory
-                plt.close(fig_img)
-                plt.close(fig_map)
-                plt.close(fig_combined)
-
-            out_images = list_img_combined
-            all_out_images.extend(out_images)
-
-            print(f"[Batch {i}] - Processed {len(out_images)} images.")
-
-    writer.close()
 
     print("Done visualizing snippet.")
-    print(f"Total images collected: {len(all_out_images)}")
+
+# def transform_goal_to_iplanner(goal_position, t_cam_to_world_SE3, idx, data_root, device):
+#     # Define the fixed transformation from iPlanner to base
+#     t_iplanner_to_base = pp.SE3([0.4, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1]).to(device)
+
+#     # Construct the file path
+#     filepath = os.path.join(data_root, 't_cam_to_world.txt')
+    
+#     try:
+#         # Use np.loadtxt with skiprows and max_rows to read only the desired line
+#         # Assuming idx=0 corresponds to the first line in the file
+#         t_base_to_world = np.loadtxt(filepath, delimiter=',', skiprows=idx, max_rows=1)
+#     except IndexError:
+#         raise ValueError(f"Index {idx} is out of bounds for the transforms file.")
+#     except Exception as e:
+#         raise IOError(f"An error occurred while reading the transform file: {e}")
+
+#     # Convert the loaded transform to a Torch tensor
+#     t_base_to_world_tensor = torch.tensor(t_base_to_world, dtype=torch.float32, device=device)
+    
+#     # Create the SE3 transformation
+#     t_base_to_world_SE3 = pp.SE3(t_base_to_world_tensor)
+
+#     t_iplanner_to_world = t_base_to_world_SE3 @ t_iplanner_to_base
+
+#     t_cam_to_world = pp.SE3(t_cam_to_world_SE3)
+
+#     t_cam_to_iplanner = t_iplanner_to_world.Inv() @ t_cam_to_world
+
+#     iplanner_goal_position = t_cam_to_iplanner @ goal_position
+
+#     return iplanner_goal_position
+
 
 if __name__ == "__main__":
     main()

@@ -20,10 +20,17 @@ install.md verändern
 cam to base transform aus dataset entfernen
 
 Check if trainined on new data if it avoids the dummy?
+change cam to world to cam to base
 
 Today:
-- Versicherung abgeben!
-- Check what to do with the indoor data!
-- Set validation cases
+- Versicherung abgeben!: Done
+- Nachricht an Franka schicken wegen Robotic Convention: Done
+- Check what to do with the indoor data!: Morgen Taka fragen, was ich da machen soll.
+- Set validation cases, check if training on important dataset helps
 - optimize relative weights set up sweep random virables and see how the plots change.
+- work on presentation
+
+Tomorrow:
+- Inserat aufgeben: QQR1P62T3AZYRLCE
+- Livit nochmal nerven
 

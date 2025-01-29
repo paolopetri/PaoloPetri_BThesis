@@ -3,9 +3,9 @@ import pypose as pp
 import torch.nn.functional as F
 
 
-def CostofTraj(waypoints, desired_wp, goals, grid_maps, grid_idxs,
+def CostofTraj(waypoints, waypoints_grid, desired_wp, goals, grid_maps, grid_idxs,
                length_x, length_y, device, ahead_dist=2.0, trav_threshold=0.5, risk_threshold=0.5,
-               alpha=1.0, beta = 1.0, epsilon=1.0, delta=1.0, is_map=True):
+               alpha=1.0, beta = 1.0, epsilon=1.0, delta=1.0, zeta=1.0, is_map=True):
     """
     Calculates the total cost of trajectories for a batch based on traversability, risk, and goal proximity.
 
@@ -43,6 +43,7 @@ def CostofTraj(waypoints, desired_wp, goals, grid_maps, grid_idxs,
         # Split grid_maps into traversability and risk maps
         traversability_arrays = grid_maps[:, 0:1, :, :]  # Shape: [batch_size, 1, height, width]
         risk_arrays = grid_maps[:, 1:2, :, :]            # Shape: [batch_size, 1, height, width]
+        elevation_arrays = grid_maps[:, 2:3, :, :]        # Shape: [batch_size, 1, height, width]
 
         # Perform grid sampling for traversability
         t_loss_M = F.grid_sample(
@@ -54,7 +55,7 @@ def CostofTraj(waypoints, desired_wp, goals, grid_maps, grid_idxs,
         ).squeeze(1).squeeze(2)  # Shape: [batch_size, num_p]
 
         t_loss_M = t_loss_M.to(torch.float32)#
-        t_loss = torch.sum(t_loss_M, dim=1)  # Shape: [batch_size]
+        t_loss = torch.sum(t_loss_M, dim=1) / num_p  # Shape: [batch_size]
 
         # Perform grid sampling for risk
         r_loss_M = F.grid_sample(
@@ -66,7 +67,18 @@ def CostofTraj(waypoints, desired_wp, goals, grid_maps, grid_idxs,
         ).squeeze(1).squeeze(2)  # Shape: [batch_size, num_p]
 
         r_loss_M = r_loss_M.to(torch.float32)
-        r_loss = torch.sum(r_loss_M, dim=1)  # Shape: [batch_size]
+        r_loss = torch.sum(r_loss_M, dim=1) / num_p  # Shape: [batch_size]
+
+        h_loss_M = F.grid_sample(
+            elevation_arrays,
+            norm_grid_idxs,
+            mode='bicubic',
+            padding_mode='border',
+            align_corners=False
+        ).squeeze(1).squeeze(2)
+
+        h_loss_M = torch.abs(waypoints_grid[:, :, 2] - h_loss_M) # in  camera frame y is up
+        h_loss = torch.sum(h_loss_M, dim=1) / num_p
 
     else:
         # If the map is not initialized
@@ -84,23 +96,22 @@ def CostofTraj(waypoints, desired_wp, goals, grid_maps, grid_idxs,
     mloss = torch.abs(desired_ds - wp_ds)
     mloss = torch.sum(mloss, axis=1)
 
-
-    # Total Cost per sample
-    total_cost_per_sample = alpha * t_loss + beta * r_loss + epsilon * mloss +  delta * gloss  # Shape: [batch_size]
-    total_cost = torch.mean(total_cost_per_sample)  # Scalar
-
     # Compute means of individual losses
     t_loss_mean = t_loss.mean()
     r_loss_mean = r_loss.mean()
     mloss_mean = mloss.mean()
     gloss_mean = gloss.mean()
+    hloss_mean = h_loss.mean()
+
+    # Compute total cost
+    total_cost = alpha * t_loss_mean + beta * r_loss_mean + epsilon * mloss_mean + delta * gloss_mean + zeta * hloss_mean
 
     # fear labels
     distance_from_start = torch.cumsum(wp_ds, dim=1, dtype=wp_ds.dtype)
-    floss_M = torch.clone(t_loss_M)[:, 1:]  # using traversability data
-    floss_M[distance_from_start > ahead_dist] = 0.0
-    obstacle_fear = torch.max(floss_M, 1, keepdim=True)[0]
-    obstacle_fear = (obstacle_fear > trav_threshold).to(torch.float32)
+    # floss_M = torch.clone(t_loss_M)[:, 1:]  # using traversability data
+    # floss_M[distance_from_start > ahead_dist] = 0.0
+    # obstacle_fear = torch.max(floss_M, 1, keepdim=True)[0]
+    # obstacle_fear = (obstacle_fear > trav_threshold).to(torch.float32)
 
     # Similar logic for risk
     rloss_M = torch.clone(r_loss_M)[:, 1:]  # using risk data
@@ -109,9 +120,11 @@ def CostofTraj(waypoints, desired_wp, goals, grid_maps, grid_idxs,
     risk_fear = (risk_fear > risk_threshold).to(torch.float32)
 
     # Combine fear labels
-    fear_labels = torch.clamp(obstacle_fear + risk_fear, max=1.0)
+    # fear_labels = torch.clamp(obstacle_fear + risk_fear, max=1.0)
 
-    return total_cost, t_loss_mean, r_loss_mean, mloss_mean, gloss_mean, fear_labels
+    fear_labels = risk_fear
+
+    return total_cost, t_loss_mean, r_loss_mean, mloss_mean, gloss_mean, hloss_mean, fear_labels
 
 
 def TransformPoints2Grid(waypoints, t_cam_to_world_tensor, t_world_to_grid_tensor):

@@ -42,6 +42,7 @@ def parse_args():
     parser.add_argument('--beta', type=float, default=3.5)
     parser.add_argument('--epsilon', type=float, default=1.0)
     parser.add_argument('--delta', type=float, default=4.0)
+    parser.add_argument('--zeta', type=float, default=1.0)
     parser.add_argument('--min_gamma', type=float, default=1e-2)
 
     # New flag to optionally load best config
@@ -56,7 +57,7 @@ def main():
     args = parse_args()
 
     if args.use_best_config:
-        best_config = load_config_from_yaml("config/best_config_128_8.yaml")
+        best_config = load_config_from_yaml("config/best_config_32_64_4.yaml")
         for key, value in best_config.items():
             setattr(args, key, value)
 
@@ -79,6 +80,7 @@ def main():
             "beta": args.beta,
             "epsilon": args.epsilon,
             "delta": args.delta,
+            "zeta": args.zeta,
             "min_gamma": args.min_gamma
             }
     )
@@ -111,6 +113,7 @@ def main():
     beta = config.beta
     epsilon = config.epsilon
     delta = config.delta
+    zeta = config.zeta
     min_gamma = config.min_gamma
 
     # Initialize the dataset with transformations
@@ -118,9 +121,10 @@ def main():
         transforms.Resize((360, 640)),
         transforms.ToTensor()
     ])
-    höngg_data = MapDataset(data_root='TrainingData/Hönggerberg', transform=transform)
-    seealpsee_data = MapDataset(data_root='TrainingData/seealpsee', transform=transform)
-    in2out1_data = MapDataset(data_root='TrainingData/in-to-out-1', transform=transform)
+    höngg_data = MapDataset(data_root='TrainingData/Hönggerberg', random_goals=True, transform=transform)
+    seealpsee_data = MapDataset(data_root='TrainingData/seealpsee', random_goals=True, transform=transform)
+    in2out1_data = MapDataset(data_root='TrainingData/in-to-out-1', random_goals=True, transform=transform)
+    # important_data = MapDataset(data_root='TrainingData/Important', transform=transform)
     full_dataset = ConcatDataset([höngg_data, seealpsee_data, in2out1_data])
 
     # Define validation split ratio
@@ -168,7 +172,7 @@ def main():
 
     # Initialize variables for checkpointing and early stopping
     best_val_loss = float('inf')
-    patience = 5
+    patience = 80
     trigger_times = 0
 
     # Training loop
@@ -203,8 +207,9 @@ def main():
             grid_idxs = Pos2Ind(transformed_waypoints, length_x, length_y, center_position, voxel_size, device)  # (batch, num_waypoints)
 
             # Calculate the trajectory cost
-            total_loss, tloss, rloss, mloss, gloss, fear_labels = CostofTraj(
+            total_loss, tloss, rloss, mloss, gloss, hloss, fear_labels = CostofTraj(
                 waypoints=waypoints,
+                waypoints_grid=transformed_waypoints,
                 desired_wp = desired_wp,
                 goals=goal_position,
                 grid_maps=grid_map,
@@ -219,6 +224,7 @@ def main():
                 beta=beta,
                 epsilon=epsilon,
                 delta=delta,
+                zeta=zeta,
                 is_map=True
             )
 
@@ -253,6 +259,13 @@ def main():
         # Validation phase
         model.eval()
         val_loss = 0.0
+        val_tloss = 0.0
+        val_rloss = 0.0
+        val_mloss = 0.0
+        val_gloss = 0.0
+        val_floss = 0.0
+        val_hloss = 0.0
+
 
         # Disable gradient computation for validation
         with torch.no_grad():
@@ -284,8 +297,9 @@ def main():
                 grid_idxs = Pos2Ind(transformed_waypoints, length_x, length_y, center_position, voxel_size, device)  # (batch, num_waypoints)
 
                 # Calculate the trajectory cost
-                total_loss, tloss, rloss, mloss, gloss, fear_labels = CostofTraj(
+                total_loss, tloss, rloss, mloss, gloss, hloss, fear_labels = CostofTraj(
                     waypoints=waypoints,
+                    waypoints_grid=transformed_waypoints,
                     desired_wp = desired_wp,
                     goals=goal_position,
                     grid_maps=grid_map,
@@ -300,6 +314,7 @@ def main():
                     beta=beta,
                     epsilon=epsilon,
                     delta=delta,
+                    zeta=zeta,
                     is_map=True
                 )
                 floss = F.binary_cross_entropy(fear, fear_labels)
@@ -307,23 +322,32 @@ def main():
                 loss = total_loss + fear_weight * floss
 
                 val_loss += loss.item()
+                val_tloss += tloss.item()
+                val_rloss += rloss.item()
+                val_mloss += mloss.item()
+                val_gloss += gloss.item()
+                val_floss += floss.item()
+                val_hloss += hloss.item()
+
                 val_bar.set_postfix(loss=loss.item())
 
 
         # Calculate average validation loss for the epoch
-        avg_tloss = tloss / len(val_loader)
-        avg_rloss = rloss / len(val_loader)
-        avg_mloss = mloss / len(val_loader)
-        avg_gloss = gloss / len(val_loader)
-        avg_floss = floss / len(val_loader)
+        avg_val_tloss = val_tloss / len(val_loader)
+        avg_val_rloss = val_rloss / len(val_loader)
+        avg_val_mloss = val_mloss / len(val_loader)
+        avg_val_gloss = val_gloss / len(val_loader)
+        avg_val_floss = val_floss / len(val_loader)
         avg_val_loss = val_loss / len(val_loader)
+        avg_val_hloss = val_hloss / len(val_loader)
         
         wandb.log({"Epoch": epoch+1,
-                   "Traversability Loss": avg_tloss * alpha,
-                   "Risk Loss": avg_rloss * beta,
-                   "Motion Loss": avg_mloss * epsilon,
-                   "Goal Loss": avg_gloss * delta,
-                   "Fear Loss": avg_floss * fear_weight,
+                   "Traversability Loss": avg_val_tloss * alpha,
+                   "Risk Loss": avg_val_rloss * beta,
+                   "Motion Loss": avg_val_mloss * epsilon,
+                   "Goal Loss": avg_val_gloss * delta,
+                   "Fear Loss": avg_val_floss * fear_weight,
+                   "Height Loss": avg_val_hloss * zeta,
                    "Validation Loss": avg_val_loss})
 
         print(f"Epoch [{epoch+1}/{num_epochs}] Training Loss: {avg_train_loss:.4f} Validation Loss: {avg_val_loss:.4f}")

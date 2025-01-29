@@ -1,0 +1,17 @@
+alpha: 1.0
+beta: 8
+delta: 1.8
+epsilon: 0.4
+fear_weight: 0.5
+min_gamma: 0.0
+encoder_channel: 32
+batch_size: 64
+knodes: 5
+learning_rate: 0.0001187126946534174
+num_epochs: 80
+num_workers: 8
+optimizer: adamw
+risk_threshold: 0.5
+trav_threshold: 0.5
+ahead_dist: 2
+weight_decay: 0.0001
