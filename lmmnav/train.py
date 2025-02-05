@@ -1,58 +1,116 @@
+"""
+train.py
 
+This script is used to train the PlannerNet model for trajectory planning. 
+It utilizes a combination of PyTorch for the neural network, wandb for logging,
+and various utility functions for data processing, trajectory cost computation, and trajectory
+optimization. The training loop supports checkpointing, early stopping, and configurable hyperparameters
+via command-line arguments or a YAML file. 
+
+Usage Example:
+    python3 train.py --num_epochs 50 --batch_size 64 --optimizer adam
+
+Author: [Paolo Petri]
+Date: [05.02.2025]
+"""
+import argparse
+import yaml
 import torch
 from torch import optim
 from torch.utils.data import DataLoader, random_split, ConcatDataset
 import torch.nn.functional as F
 import torchvision.transforms as transforms
 
-import argparse
-import yaml
 import wandb
 from tqdm import tqdm
 from pprint import pprint
+from typing import Dict, Any
+
 from dataset import MapDataset
 from planner_net import PlannerNet
 from utils import CostofTraj, TransformPoints2Grid, Pos2Ind
 from traj_opt import TrajOpt
 
-def load_config_from_yaml(yaml_path):
+def load_config_from_yaml(yaml_path: str) -> Dict[str, Any]:
+    """
+    Load configuration parameters from a YAML file.
+
+    Args:
+        yaml_path (str): Path to the YAML configuration file.
+
+    Returns:
+        Dict[str, Any]: Dictionary containing key-value pairs from the YAML file.
+    """
     with open(yaml_path, 'r') as stream:
         try:
             return yaml.safe_load(stream)
         except yaml.YAMLError as exc:
             print(exc)
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
+    """
+    Parse command-line arguments for the training script.
+
+    Returns:
+        argparse.Namespace: Parsed command-line arguments.
+    """
     parser = argparse.ArgumentParser(description="Train PlannerNet with wandb sweeps.")
+
     # General training parameters
-    parser.add_argument('--num_epochs', type=int, default=60)
-    parser.add_argument('--batch_size', type=int, default=128)
-    parser.add_argument('--num_workers', type=int, default=8)
-    parser.add_argument('--optimizer', type=str, default='adamw')
-    parser.add_argument('--learning_rate', type=float, default=1.5e-4)
-    parser.add_argument('--weight_decay', type=float, default=1e-4)
-    parser.add_argument('--encoder_channel', type=int, default=16)
-    parser.add_argument('--knodes', type=int, default=5)
+    parser.add_argument('--num_epochs', type=int, default=80,
+                        help='Number of training epochs.')
+    parser.add_argument('--min_gamma', type=float, default=0,
+                        help='Minimum improvement in validation loss to continue training.')
+    parser.add_argument('--batch_size', type=int, default=64,
+                        help='Batch size for training.')
+    parser.add_argument('--num_workers', type=int, default=8,
+                        help='Number of worker processes for data loading.')
+    parser.add_argument('--optimizer', type=str, default='adamw',
+                        help='Optimizer type (e.g., "adam", "adamw").')
+    parser.add_argument('--learning_rate', type=float, default=0.0001187126946534174,
+                        help='Learning rate for the optimizer.')
+    parser.add_argument('--weight_decay', type=float, default=0.0001,
+                        help='Weight decay (L2 regularization).')
+    parser.add_argument('--encoder_channel', type=int, default=32,
+                        help='Number of channels for the encoder in PlannerNet.')
+    parser.add_argument('--knodes', type=int, default=5,
+                        help='Number of nodes in PlannerNet output trajectory.')
+
     # Additional hyperparameters
-    parser.add_argument('--ahead_dist', type=float, default=2.0)
-    parser.add_argument('--trav_threshold', type=float, default=0.5)
-    parser.add_argument('--risk_threshold', type=float, default=0.5)
-    parser.add_argument('--fear_weight', type=float, default=0.5)
-    parser.add_argument('--alpha', type=float, default=0.5)
-    parser.add_argument('--beta', type=float, default=3.5)
-    parser.add_argument('--epsilon', type=float, default=1.0)
-    parser.add_argument('--delta', type=float, default=4.0)
-    parser.add_argument('--zeta', type=float, default=1.0)
-    parser.add_argument('--min_gamma', type=float, default=1e-2)
+    parser.add_argument('--ahead_dist', type=float, default=2.0,
+                        help='Distance ahead for fear loss.')
+    parser.add_argument('--trav_threshold', type=float, default=0.9,
+                        help='Traversability threshold for fear loss.')
+    parser.add_argument('--risk_threshold', type=float, default=0.5,
+                        help='Risk threshold for fear loss.')
+    parser.add_argument('--fear_weight', type=float, default=1.0,
+                        help='Weight factor for fear loss.')
+    parser.add_argument('--alpha', type=float, default=1.0,
+                        help='Weight factor for traversability loss.')
+    parser.add_argument('--beta', type=float, default=8.0,
+                        help='Weight factor for risk loss.')
+    parser.add_argument('--delta', type=float, default=1.8,
+                        help='Weight factor for goal loss.')
+    parser.add_argument('--epsilon', type=float, default=0.4,
+                        help='Weight factor for motion loss.')
+    parser.add_argument('--zeta', type=float, default=1.0,
+                        help='Weight factor for height loss.')
 
-    # New flag to optionally load best config
-    parser.add_argument('--use_best_config', action='store_true', 
-                        help="Flag to override args with best configuration from YAML")
-
+    # Flag to optionally load best config
+    parser.add_argument('--use_best_config', action='store_true',
+                        help="Flag to override args with best configuration from YAML.")
 
     return parser.parse_args()
 
-def main():
+def main() -> None:
+    """
+    Main function to orchestrate the training process. Parses arguments, initializes wandb, 
+    loads dataset, creates DataLoaders, sets up the PlannerNet model and optimizer, 
+    then runs the training and validation loops with checkpointing and early stopping.
+    
+    Returns:
+        None
+    """
     # Initialize wandb
     args = parse_args()
 
@@ -96,7 +154,7 @@ def main():
     step = 0.1
 
 
-    # Hyperparameters
+    # Training and Hyperparameters
     num_epochs = config.num_epochs
     batch_size = config.batch_size
     num_workers = config.num_workers
@@ -121,6 +179,7 @@ def main():
         transforms.Resize((360, 640)),
         transforms.ToTensor()
     ])
+    # Initialize the dataset
     höngg_data = MapDataset(data_root='TrainingData/Hönggerberg', random_goals=True, transform=transform)
     seealpsee_data = MapDataset(data_root='TrainingData/seealpsee', random_goals=True, transform=transform)
     in2out1_data = MapDataset(data_root='TrainingData/in-to-out-1', random_goals=True, transform=transform)

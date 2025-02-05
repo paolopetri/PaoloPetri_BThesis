@@ -1,4 +1,4 @@
-name: iplanner
+name: llmnav
 channels:
   - pytorch
   - nvidia

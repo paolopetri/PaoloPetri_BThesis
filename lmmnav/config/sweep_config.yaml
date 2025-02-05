@@ -28,7 +28,6 @@ parameters:
     value: 0.5
   risk_threshold:
     value: 0.5
-  # Fix loss weights or keep narrow ranges at first
   fear_weight:
     value: 1.0
   alpha:
@@ -39,5 +38,7 @@ parameters:
     value: 1.5
   delta:
     value: 4.0
+  zeta:
+    value: 0.5
   min_gamma:
     value: 0.005

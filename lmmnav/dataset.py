@@ -1,10 +1,17 @@
 """
-This module defines the MapDataset class, a custom PyTorch Dataset for loading and processing data required
-for training a navigation model. The dataset includes traversability and risk maps, image pairs (depth and risk images),
-start positions transformed into the camera frame, and goal positions transformed into the frame of the starting position.
+map_dataset.py
+
+This module defines the MapDataset class, a custom PyTorch Dataset for loading
+and processing data required for training a navigation model. The dataset
+includes:
+- Traversability, risk, and elevation grid maps
+- Depth and risk images
+- Positions and transformations (camera-to-world, world-to-grid)
+- Goal positions (with optional random perturbations)
+
+Overall, it provides a convenient interface to retrieve all necessary training
+samples for learning navigation-related tasks.
 """
-
-
 import os
 import torch
 from torch.utils.data import Dataset
@@ -12,27 +19,33 @@ import numpy as np
 import pypose as pp
 import torchvision.transforms as transforms
 import torchvision.transforms.functional as TF
-from scipy.ndimage import gaussian_filter, binary_dilation
+from scipy.ndimage import gaussian_filter
 
 class MapDataset(Dataset):
-    """The MapDataset handles the loading of all necessary data from text and image files, performs necessary
-        transformations using PyPose (pp), and prepares samples for training.
-
-        Key functionalities include:
-        - Loading traversability and risk grid maps and stacking them into a single tensor.
-        - Loading center positions, image pairs, start positions, goal positions, and world to grid transformations.
-        - Transforming start positions from the base link frame to the camera frame.
-        - Generating goal positions based on future positions and transforming them into the frame of the starting position.
     """
-    def __init__(self, data_root: str, random_goals = False, transform=None, device=None) -> None:
-        """
-        Initializes the MapDataset by loading all necessary data.
+    The MapDataset class loads and prepares data for a navigation model, including:
+      - Traversability, risk, and elevation maps (stacked into one tensor).
+      - Depth and risk images (optionally transformed).
+      - Center positions in the grid frame.
+      - Camera-to-world and world-to-grid transformations.
+      - Goal positions, optionally randomized.
 
-        Args:
-            data_root (str): Path to the TrainingData folder.
-            transform (callable, optional): Optional transform to be applied to images.
-            device (torch.device): Device on which tensors will be allocated.
-        """
+    Args:
+        data_root (str): Path to the root directory containing map and image data.
+        random_goals (bool, optional): If True, applies random perturbations to goal positions.
+        transform (callable, optional): Torchvision-like transform for depth/risk images.
+        device (torch.device, optional): Device on which tensors will be placed (CPU/GPU).
+
+    Attributes:
+        data_root (str): Root directory for data.
+        transform (callable): Transform operations for images.
+        device (torch.device): Device for all loaded tensors.
+        center_positions (torch.Tensor): (N, 2) center coordinates in the grid frame.
+        t_cam_to_world_SE3 (pp.SE3): (N,) camera-to-world transformations as pypose SE3.
+        goal_positions (torch.Tensor): (N, 3) goal positions in the start frame.
+        t_world_to_grid_SE3 (pp.SE3): (N,) world-to-grid transformations as pypose SE3.
+    """
+    def __init__(self, data_root: str, random_goals: bool = False, transform = None, device: torch.device = None) -> None:
 
         self.data_root = data_root
       
@@ -53,7 +66,7 @@ class MapDataset(Dataset):
         self.t_world_to_grid_SE3 = self.load_world_to_grid_transforms_SE3()  # Shape: (num_maps, 7)
 
         
-    def __len__(self):
+    def __len__(self) -> int:
         """
         Returns the total number of samples in the dataset.
 
@@ -62,7 +75,7 @@ class MapDataset(Dataset):
         """
         return len(self.center_positions)
     
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> dict:
         """
         Retrieves the sample at the given index.
 
@@ -99,37 +112,19 @@ class MapDataset(Dataset):
         }
         return sample
 
-    
-    # def load_grid_map(self, idx, sigma=1.0):
-    #     """
-    #     Loads traversability and risk grid map into tensors.
+    def load_grid_map(self, idx: int, sigma: float = 1.0) -> tuple:
+        """
+        Load and return traversability, risk, and elevation maps for a given index.
 
-    #     Returns:
-    #         tuple:
-    #             - traversability_maps (torch.Tensor): Tensor of shape (num_samples, height, width).
-    #             - risk_maps (torch.Tensor): Tensor of shape (num_samples, height, width).
-    #     """
+        This also applies a Gaussian blur to the traversability and risk maps.
 
-    #     traversability_dir = os.path.join(self.data_root, 'maps', 'traversability')
-    #     risk_dir = os.path.join(self.data_root, 'maps', 'risk')
+        Args:
+            idx (int): Index of the sample to load.
+            sigma (float, optional): Standard deviation for Gaussian blurring.
 
-    #     traversability_file = os.path.join(traversability_dir, f'{idx}.txt')
-    #     risk_file = os.path.join(risk_dir, f'{idx}.txt')
-
-    #     traversability_map = np.loadtxt(traversability_file, delimiter=',').T
-    #     risk_map = np.loadtxt(risk_file, delimiter=',').T
-
-    #     traversability_map = 1 - traversability_map  # Invert the traversability map
-
-    #     traversability_map_smoothed = gaussian_filter(traversability_map, sigma=sigma)
-    #     risk_map_smoothed = gaussian_filter(risk_map, sigma)
-
-    #     traversability_tensor = torch.tensor(traversability_map_smoothed, dtype=torch.float32, device=self.device)
-    #     risk_tensor = torch.tensor(risk_map_smoothed, dtype=torch.float32, device=self.device)
-
-    #     return traversability_tensor, risk_tensor
-
-    def load_grid_map(self, idx, sigma=1.0, dilation_kernel=5, trav_threshold=0.5, risk_threshold=0.5):
+        Returns:
+            tuple: (traversability_map, risk_map, elevation_map) as torch.Tensor objects of shape (N, H, W).
+        """
         elevation_dir = os.path.join(self.data_root, 'maps', 'elevation')
         traversability_dir = os.path.join(self.data_root, 'maps', 'traversability')
         risk_dir = os.path.join(self.data_root, 'maps', 'risk')
@@ -144,15 +139,6 @@ class MapDataset(Dataset):
 
         traversability_map = 1 - traversability_map
 
-        # # Threshold
-        # trav_bin = (traversability_map > trav_threshold)
-        # risk_bin = (risk_map > risk_threshold)
-
-        # # Dilation
-        # structure = np.ones((dilation_kernel, dilation_kernel), dtype=bool)
-        # trav_dilated = binary_dilation(trav_bin, structure=structure).astype(np.float32)
-        # risk_dilated = binary_dilation(risk_bin, structure=structure).astype(np.float32)
-
         # Blur after dilation
         trav_blurred = gaussian_filter(traversability_map, sigma=sigma)
         risk_blurred = gaussian_filter(risk_map, sigma=sigma)
@@ -166,7 +152,7 @@ class MapDataset(Dataset):
 
 
     
-    def load_center_positions(self):
+    def load_center_positions(self) -> torch.Tensor:
         """
         Loads the position of the center of the grid maps from a text file.
         This position is expressed in the grid frame.
@@ -182,7 +168,7 @@ class MapDataset(Dataset):
         
         return center_positions_tensor
 
-    def load_image_pair(self, idx):
+    def load_image_pair(self, idx: int) -> tuple:
         """
         Loads and returns the depth and risk images for a given index.
 
@@ -221,7 +207,7 @@ class MapDataset(Dataset):
 
         return depth_image, risk_image
     
-    def ensure_three_channels(self, image):
+    def ensure_three_channels(self, image: np.ndarray) -> np.ndarray:
         """
         Ensures that the image has three channels.
 
@@ -239,7 +225,7 @@ class MapDataset(Dataset):
             image = np.repeat(image, 3, axis=2)
         return image
     
-    def resize_image(self, image, size):
+    def resize_image(self, image, size: tuple) -> torch.Tensor:
         """
         Resizes the image tensor to the given size.
 
@@ -255,7 +241,7 @@ class MapDataset(Dataset):
         return image
     
 
-    def load_t_cam_to_world_SE3(self):
+    def load_t_cam_to_world_SE3(self) -> pp.SE3:
         """
         Loads start positions and orientations of the base link from a text file,
         transforms them to the camera link frame, and returns as pp.SE3 tensors.
@@ -269,10 +255,8 @@ class MapDataset(Dataset):
         t_base_to_world_SE3 = pp.SE3(t_base_to_world_tensor)  # Shape: [num_samples, 7]
 
         # Define the static transform from camera link to base link frame
-        # t_cam_to_base = torch.tensor([0.001, 0.197, -0.432, 0.544, 0.544, -0.453, 0.451], dtype=torch.float32, device=self.device) # cam2base
-        # t_cam_to_base = torch.tensor([-0.460, -0.002, 0.115, 0.544, 0.544, -0.453, -0.451], dtype=torch.float32, device=self.device) # base2cam
-        t_cam_to_base = torch.tensor([0.4, 0, 0, 0, 0, 0, 1], dtype=torch.float32, device=self.device) # Shape: [7] # Offset
-        # t_cam_to_base = torch.tensor([0, 0, 0, 0, 0, 0, 1], dtype=torch.float32, device=self.device) # Shape: [7] # identity
+        t_cam_to_base = torch.tensor([-0.460, -0.002, 0.115, 0.544, 0.544, -0.453, -0.451], dtype=torch.float32, device=self.device) # base2cam
+        # t_cam_to_base = torch.tensor([0.4, 0, 0, 0, 0, 0, 1], dtype=torch.float32, device=self.device) # Shape: [7] # for iPlanner Frame
         t_cam_to_base_batch = pp.SE3(t_cam_to_base.unsqueeze(0).repeat(t_base_to_world.shape[0], 1))  # Shape: [num_samples, 7]
 
         t_cam_to_world_SE3 = t_base_to_world_SE3 @ t_cam_to_base_batch  # Shape: [num_samples, 7]
@@ -280,13 +264,18 @@ class MapDataset(Dataset):
         return t_cam_to_world_SE3
 
 
-    def load_goal_positions(self, random_goals=False):
+    def load_goal_positions(self, random_goals: bool = False) -> torch.Tensor:
         """
-        Generates goal positions based on the next position after the start position
-        and transforms them into the frame of the start position.
+        Generate goal positions by taking a future frame from each trajectory, 
+        transforming it into the current frame. Optionally apply random offsets.
+
+        Note: iPlanner uses a different frame for planning, so the offsets are different.
+
+        Args:
+            random_goals (bool, optional): If True, randomly perturb the x/z coordinates.
 
         Returns:
-            torch.Tensor: Transformed goal positions as a tensor of shape (num_samples, 3).
+            torch.Tensor: (N, 3) positions in the camera frame.
         """
 
         t_cam_to_world_SE3 = self.t_cam_to_world_SE3  # Shape: [num_samples]
@@ -304,22 +293,22 @@ class MapDataset(Dataset):
         goal_xyz_SE3 = transformed_goal_SE3.translation()  # Extract positions (x, y, z) from SE3 objects
 
         if random_goals:
-            # x_offset = torch.empty(num_samples, device=self.device).uniform_(-5.0, 5.0)  # Shape: [num_samples, 1]
-            # z_offset = torch.normal(mean=0.0, std=0.3, size=(num_samples,), device=self.device)  # Shape: [num_samples, 1]
-            # goal_xyz_SE3[:, 0] += x_offset
-            # goal_xyz_SE3[:, 2] += z_offset
-
-            # for offset:
-            x_offset = torch.normal(mean=0.0, std=0.3, size=(num_samples,), device=self.device)  # Shape: [num_samples, 1]
-            y_offset = torch.empty(num_samples, device=self.device).uniform_(-7.0, 7.0)  # Shape: [num_samples, 1]
+            x_offset = torch.empty(num_samples, device=self.device).uniform_(-5.0, 5.0)  # Shape: [num_samples, 1]
+            z_offset = torch.normal(mean=0.0, std=0.3, size=(num_samples,), device=self.device)  # Shape: [num_samples, 1]
             goal_xyz_SE3[:, 0] += x_offset
-            goal_xyz_SE3[:, 1] += y_offset
+            goal_xyz_SE3[:, 2] += z_offset
+
+            # Optional: For iPlanner Frame:
+            # x_offset = torch.normal(mean=0.0, std=0.3, size=(num_samples,), device=self.device)  # Shape: [num_samples, 1]
+            # y_offset = torch.empty(num_samples, device=self.device).uniform_(-7.0, 7.0)  # Shape: [num_samples, 1]
+            # goal_xyz_SE3[:, 0] += x_offset
+            # goal_xyz_SE3[:, 1] += y_offset
 
         return goal_xyz_SE3  # Shape: [num_samples, 3]
 
         
 
-    def load_world_to_grid_transforms_SE3(self):
+    def load_world_to_grid_transforms_SE3(self) -> pp.SE3:
         """
         Loads world to grid transformations from a text file and returns them as pp.SE3 objects.
 

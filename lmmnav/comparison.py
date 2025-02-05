@@ -1,8 +1,23 @@
+"""
+comparison.py
+
+This script compares the performance of two trajectory planning models, the "LLM Nav" (PlannerNet)
+and the "iPlanner Nav" (iPlannerPlannerNet). It calculates several cost components for each model,
+visualizes their trajectories on an occupancy grid, and generates comparison plots and GIFs. 
+Finally, it computes average and standard deviation statistics for each cost component and prints
+a table of results.
+
+Usage Example:
+    python comparison.py
+
+Author: [Paolo Petri]
+Date: [07.02.2025]
+"""
 import torch
 from torch.utils.data import DataLoader, Subset
-import pypose as pp
 import numpy as np
 import pandas as pd
+from typing import NoReturn
 
 from dataset import MapDataset
 from utils_viz import comparison_plot_on_map, create_gif_from_figures, plot_loss_comparison
@@ -11,7 +26,26 @@ from planner_net import PlannerNet
 from iplanner_planner_net import iPlannerPlannerNet
 from traj_opt import TrajOpt  
 
-def main():
+
+def main() -> NoReturn:
+    """
+    Main function to compare trajectory costs between LLM Nav (PlannerNet) and iPlanner Nav
+    (iPlannerPlannerNet).
+
+    Steps:
+        1. Loads a dataset from the specified root directory.
+        2. Defines a subset of indices to evaluate.
+        3. Initializes and loads checkpoints for both PlannerNet and iPlannerPlannerNet.
+        4. Iterates over the data to compute trajectory predictions for each model.
+        5. Calculates various cost components (Traversability, Risk, Motion, Goal, Height) 
+           for both models.
+        6. Visualizes and saves comparison plots and GIFs of both trajectories on the occupancy map.
+        7. Aggregates and logs average and standard deviation of cost components, then prints 
+           a formatted comparison table.
+
+    Returns:
+        None
+    """
     data_root = 'TrainingData/Important'
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -77,8 +111,6 @@ def main():
             depth_img, risk_img = sample['image_pair']
             depth_img = depth_img.to(device)
             risk_img = risk_img.to(device)
-
-            # goal_position[:, 1] += -6.0
             
 
             preds, fear = model(depth_img, risk_img, goal_position)
@@ -196,9 +228,9 @@ def main():
 
     print("Trajectory Cost Comparison (Average ± Std):")
     print(df.to_string())
-    # Optionally, create a LaTeX version:
-    print(df.to_latex())
-    print("Done with evaluation of LMM Nav to iPlanner Nav comparison.")
+    # Optional: Create a LaTeX version:
+    # print(df.to_latex())
+    # print("Done with evaluation of LMM Nav to iPlanner Nav comparison.")
 
 if __name__ == "__main__":
     main()

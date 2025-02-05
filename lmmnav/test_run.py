@@ -1,18 +1,46 @@
-import torch
+"""
+test_run.py
+
+This script visualizes waypoints and trajectories produced by a trained PlannerNet model.
+It loads a saved checkpoint of the model, takes a subset of data from MapDataset, and plots
+the predicted waypoints on both the occupancy grid map and depth/risk images. Additionally,
+it generates GIFs of the combined trajectory plots and RGB views for easier visualization.
+
+Usage:
+    python3 test_run.py
+
+Author: [Paolo Petri]
+Date: [06.02.2025]
+"""
 import os
-from torch.utils.data import DataLoader, Subset
-import imageio
 import io
+import torch
+import imageio
 import matplotlib.pyplot as plt
+from torch.utils.data import DataLoader, Subset
 
 from dataset import MapDataset
 from utils_viz import plot_traj_batch_on_map, combine_figures, plot_waypoints_on_depth_risk, plot_single_waypoints_on_rgb
 from utils import prepare_data_for_plotting
 from planner_net import PlannerNet
 from iplanner_planner_net import iPlannerPlannerNet
-from traj_opt import TrajOpt  
+from traj_opt import TrajOpt
 
-def main():
+def main() -> None:
+    """
+    Main function to visualize model-predicted trajectories.
+
+    Steps:
+        1. Loads a subset of the MapDataset from `data_root`.
+        2. Initializes PlannerNet (and optionally iPlannerPlannerNet) with a
+           pre-trained checkpoint.
+        3. Iterates through the data to predict waypoints using the loaded model.
+        4. Plots waypoints on depth/risk images and occupancy grid maps, then
+           saves and combines them into GIF animations for easy inspection.
+
+    Returns:
+        None
+    """
     data_root = 'TrainingData/Important'
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -23,19 +51,17 @@ def main():
         device=device
     )
 
-    #snippet_indices = range(190, 194)
-    snippet_indices = range(1359, 1360)
-    # snippet_indices = range(132 + 34, 228 - 30)
+    snippet_indices = range(190, 194)
+    
     subset_dataset = Subset(dataset, snippet_indices)
 
     viz_loader = DataLoader(
         subset_dataset,
-        batch_size=1,
+        batch_size=8,
         shuffle=False,
         num_workers=0
     )
 
-    # 4) Load your model
     traj_opt = TrajOpt()
     model = PlannerNet(32, 5).to(device)
     best_model_path = "checkpoints/best_model.pth"
@@ -45,6 +71,7 @@ def main():
 
     model.eval()
 
+    # Optional: Load iPlanner model (commented out)
     # iplanner_model = iPlannerPlannerNet(16, 5).to(device)
     # iplanner_model_path = "checkpoints/iplanner.pt"
     # iplanner_checkpoint_tuple = torch.load(iplanner_model_path, map_location=device)
@@ -103,30 +130,30 @@ def main():
                 safe_path = os.path.join(output_dir_combined, f"{i}.png")
                 fig_combined.savefig(safe_path, format='png', dpi=100, bbox_inches='tight')
 
-            #     # Convert figure to image data
-            #     buf = io.BytesIO()
-            #     fig_combined.savefig(buf, format='png', dpi=100, bbox_inches='tight')
-            #     buf.seek(0)
-            #     frame = imageio.imread(buf)
+                # Convert figure to image data
+                buf = io.BytesIO()
+                fig_combined.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+                buf.seek(0)
+                frame = imageio.imread(buf)
 
-            #     writer.append_data(frame)
+                writer.append_data(frame)
 
-            #     # Close figure to free memory
-            #     plt.close(fig_img)
-            #     plt.close(fig_map)
-            #     plt.close(fig_combined)
+                # Close figure to free memory
+                plt.close(fig_img)
+                plt.close(fig_map)
+                plt.close(fig_combined)
 
-            # for fig_rgb in figs_rgb:
-            #     # Convert figure to image data
-            #     buf = io.BytesIO()
-            #     fig_rgb.savefig(buf, format='png', dpi=100, bbox_inches='tight')
-            #     buf.seek(0)
-            #     frame_rgb = imageio.imread(buf)
+            for fig_rgb in figs_rgb:
+                # Convert figure to image data
+                buf = io.BytesIO()
+                fig_rgb.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+                buf.seek(0)
+                frame_rgb = imageio.imread(buf)
 
-            #     writer_rgb.append_data(frame_rgb)
+                writer_rgb.append_data(frame_rgb)
 
-            #     # Close figure to free memory
-            #     plt.close(fig_rgb)
+                # Close figure to free memory
+                plt.close(fig_rgb)
 
     
 
@@ -135,6 +162,8 @@ def main():
     writer.close()
 
     print("Done visualizing snippet.")
+
+    return None
 
 if __name__ == "__main__":
     main()
