@@ -1,6 +1,8 @@
 import torch
 from torch.utils.data import DataLoader, Subset
 import pypose as pp
+import numpy as np
+import pandas as pd
 
 from dataset import MapDataset
 from utils_viz import comparison_plot_on_map, create_gif_from_figures, plot_loss_comparison
@@ -15,7 +17,7 @@ def main():
 
     dataset = MapDataset(
         data_root=data_root,
-        random_goals=True,
+        random_goals=False,
         transform=None,
         device=device
     )
@@ -58,7 +60,7 @@ def main():
 
     voxel_size = 0.15
 
-    loss_components = ['Total Loss', 'Traversability Loss', 'Risk Loss', 'Motion Loss', 'Goal Loss', 'Height Loss']
+    loss_components = ['Total Trajectory Cost', 'Traversability Cost', 'Risk Cost', 'Motion Cost', 'Goal Cost', 'Height Cost']
 
     model1_losses = { comp: [] for comp in loss_components }
     model2_losses = { comp: [] for comp in loss_components }
@@ -76,11 +78,11 @@ def main():
             depth_img = depth_img.to(device)
             risk_img = risk_img.to(device)
 
-            goal_position[:, 1] += -2.0
+            # goal_position[:, 1] += -6.0
             
 
             preds, fear = model(depth_img, risk_img, goal_position)
-            waypoints = traj_opt.TrajGeneratorFromPFreeRot(preds, step=0.5)
+            waypoints = traj_opt.TrajGeneratorFromPFreeRot(preds, step=0.1)
 
             num_p = waypoints.shape[1]
             desired_wp = traj_opt.TrajGeneratorFromPFreeRot(goal_position[:, None, 0:3], step=1.0/(num_p-1))
@@ -117,7 +119,7 @@ def main():
             )
 
             iplanner_preds, iplanner_fear = iplanner_model(depth_img, goal_position)
-            iplanner_waypoints = traj_opt.TrajGeneratorFromPFreeRot(iplanner_preds, step=0.5)
+            iplanner_waypoints = traj_opt.TrajGeneratorFromPFreeRot(iplanner_preds, step=0.1)
 
             transformed_iplanner_waypoints = TransformPoints2Grid(iplanner_waypoints, t_cam_to_world_SE3, t_world_to_grid_SE3)
             _, iplanner_grid_idxs, _ = prepare_data_for_plotting(iplanner_waypoints, goal_position, center_position, grid_map, t_cam_to_world_SE3, t_world_to_grid_SE3, voxel_size)
@@ -148,20 +150,20 @@ def main():
             )
     
             # Collect losses for Model 1
-            model1_losses['Total Loss'].append(total_loss.item())
-            model1_losses['Traversability Loss'].append(tloss.item())
-            model1_losses['Risk Loss'].append(rloss.item())
-            model1_losses['Motion Loss'].append(mloss.item())
-            model1_losses['Goal Loss'].append(gloss.item())
-            model1_losses['Height Loss'].append(hloss.item())
+            model1_losses['Total Trajectory Cost'].append(total_loss.item())
+            model1_losses['Traversability Cost'].append(tloss.item())
+            model1_losses['Risk Cost'].append(rloss.item())
+            model1_losses['Motion Cost'].append(mloss.item())
+            model1_losses['Goal Cost'].append(gloss.item())
+            model1_losses['Height Cost'].append(hloss.item())
 
             # Collect losses for iPlanner
-            model2_losses['Total Loss'].append(iplanner_total_loss.item())
-            model2_losses['Traversability Loss'].append(iplanner_tloss.item())
-            model2_losses['Risk Loss'].append(iplanner_rloss.item())
-            model2_losses['Motion Loss'].append(iplanner_mloss.item())
-            model2_losses['Goal Loss'].append(iplanner_gloss.item())
-            model2_losses['Height Loss'].append(iplanner_hloss.item())
+            model2_losses['Total Trajectory Cost'].append(iplanner_total_loss.item())
+            model2_losses['Traversability Cost'].append(iplanner_tloss.item())
+            model2_losses['Risk Cost'].append(iplanner_rloss.item())
+            model2_losses['Motion Cost'].append(iplanner_mloss.item())
+            model2_losses['Goal Cost'].append(iplanner_gloss.item())
+            model2_losses['Height Cost'].append(iplanner_hloss.item())
 
 
             print(f"[Batch iPlanner {i}] - Processed {len(figs)} images.")
@@ -171,10 +173,31 @@ def main():
             model2_losses[comp],
             metric_name=comp,
             model1_label="LLM Nav",
-            model2_label="iPlanner Nav",
+            model2_label="iPlanner",
             save_dir = "output/Comparison/iPlanner/Losses"
         )
+        results = {
+        "LLM Nav": {},
+        "iPlanner": {}
+    }
 
+    for comp in loss_components:
+        avg_llm_nav = np.mean(model1_losses[comp])
+        std_llm_nav = np.std(model1_losses[comp])
+        avg_iplanner = np.mean(model2_losses[comp])
+        std_iplanner = np.std(model2_losses[comp])
+        
+        results["LLM Nav"][comp] = f"{avg_llm_nav:.2f} ± {std_llm_nav:.2f}"
+        results["iPlanner"][comp] = f"{avg_iplanner:.2f} ± {std_iplanner:.2f}"
+
+    # Create a DataFrame with cost items as columns and models as rows
+    df = pd.DataFrame(results).transpose()
+    df = df[loss_components]  # Order the columns
+
+    print("Trajectory Cost Comparison (Average ± Std):")
+    print(df.to_string())
+    # Optionally, create a LaTeX version:
+    print(df.to_latex())
     print("Done with evaluation of LMM Nav to iPlanner Nav comparison.")
 
 if __name__ == "__main__":

@@ -96,7 +96,7 @@ def plot_single_waypoints_on_rgb(waypoints_batch, goal_positions_batch, idx, mod
     
     R_tilt = rotation_x(3, device=device) # accounting for camera tilt
 
-    # R_tilt_ip = rotation_x(4, device=device) # accounting for camera tilt
+    R_tilt_ip = rotation_x(4, device=device) # accounting for additional iPlanner tilt camera tilt
    
 
     # Ensure idx is a list
@@ -118,14 +118,18 @@ def plot_single_waypoints_on_rgb(waypoints_batch, goal_positions_batch, idx, mod
         # Rotate points to align with the conventional camera coordinate system
         trajectory_3d_standard = (R @ waypoints.T).T  # Shape: (N, 3)
         trajectory_3d_standard[0, 1] = 0.3 # set [::1] to 0.3 for iPlanner
-        trajectory_3d_standard = (R_tilt @ trajectory_3d_standard.T).T # R_tilt_ip for iPlanner
+        if model_name == "iPlanner":
+            trajectory_3d_standard[:,1] = 0.3
+            trajectory_3d_standard = (R_tilt_ip @ trajectory_3d_standard.T).T
+        elif model_name == "LLMNav":
+            trajectory_3d_standard = (R_tilt @ trajectory_3d_standard.T).T # R_tilt_ip for iPlanner
 
         # Rotate goal position
         goal_3d_standard = (R @ goal_position.unsqueeze(1)).squeeze(1)  # Shape: (3,)
        
         goal_3d_standard = (R_tilt @ goal_3d_standard.unsqueeze(1)).squeeze(1)
-
-        # trajectory_3d_standard[-1, 1] = goal_3d_standard[1] for iPlanner, because its height estimation does not work!
+        if model_name == "iPlanner":
+            trajectory_3d_standard[-1, 1] = goal_3d_standard[1] # for iPlanner, because its height estimation does not work!
 
         # Define the image path based on the index
         image_path = f'TrainingData/Important/camera/{current_idx}.png'
@@ -249,7 +253,7 @@ def plot_waypoints_on_depth_risk(
         raise ValueError(f"Unknown frame: {frame}. Please use 'LLMNav' or 'iPlanner'.")
     
     R_tilt = rotation_x(3, device=device) # accounting for camera tilt
-
+    R_tilt_ip = rotation_x(4, device=device) # accounting for additional iPlanner tilt camera tilt
     
      # Ensure idx is a list
     if isinstance(idx, torch.Tensor):
@@ -273,13 +277,19 @@ def plot_waypoints_on_depth_risk(
     )):
         # Rotate points to align with the conventional camera coordinate system
         trajectory_3d_standard = (R @ waypoints.T).T  # Shape: (N, 3)
-        trajectory_3d_standard[0, 1] = 0.3
-        trajectory_3d_standard = (R_tilt @ trajectory_3d_standard.T).T
+        trajectory_3d_standard[0, 1] = 0.3 # set [::1] to 0.3 for iPlanner
+        if model_name == "iPlanner":
+            trajectory_3d_standard[:,1] = 0.3
+            trajectory_3d_standard = (R_tilt_ip @ trajectory_3d_standard.T).T
+        elif model_name == "LLMNav":
+            trajectory_3d_standard = (R_tilt @ trajectory_3d_standard.T).T # R_tilt_ip for iPlanner
 
         # Rotate goal position
         goal_3d_standard = (R @ goal_position.unsqueeze(1)).squeeze(1)  # Shape: (3,)
        
         goal_3d_standard = (R_tilt @ goal_3d_standard.unsqueeze(1)).squeeze(1)
+        if model_name == "iPlanner":
+            trajectory_3d_standard[-1, 1] = goal_3d_standard[1] # for iPlanner, because its height estimation does not work!
 
         # Project the valid 3D waypoints to 2D pixel coordinates
         trajectory_2d_valid = project_points(trajectory_3d_standard, P)
@@ -372,7 +382,9 @@ def plot_traj_batch_on_map(
     start_idxs: torch.Tensor, 
     waypoints_idxs: torch.Tensor, 
     goal_idxs: torch.Tensor, 
-    grid_maps: torch.Tensor
+    grid_maps: torch.Tensor,
+    save: bool = False,
+    output_dir: str = 'output/map'
 ):
     """
     Plots the Traversability and Risk map for each item in a batch.
@@ -603,21 +615,27 @@ def plot_loss_comparison(x_losses, y_losses, metric_name, model1_label="Model 1"
         model2_label (str): Label for the second model.
         save_dir (str): Directory where plots will be saved.
     """
+    import os
+    import matplotlib.pyplot as plt
+
     # Ensure the save directory exists
     os.makedirs(save_dir, exist_ok=True)
     
     plt.figure(figsize=(8, 6))
     plt.scatter(x_losses, y_losses, alpha=0.7)
-    plt.title(f"{metric_name.capitalize()} Comparison")
-    plt.xlabel(f"{model1_label} {metric_name}")
-    plt.ylabel(f"{model2_label} {metric_name}")
+    
+    # Set larger font sizes for title and labels
+    plt.title(f"{metric_name.capitalize()} Comparison", fontsize=24)
+    plt.xlabel(f"{model1_label} {metric_name}", fontsize=22)
+    plt.ylabel(f"{model2_label} {metric_name}", fontsize=22)
+    
     plt.grid(True)
     
     # Plot reference line y = x
     min_val = min(min(x_losses), min(y_losses))
     max_val = max(max(x_losses), max(y_losses))
     plt.plot([min_val, max_val], [min_val, max_val], 'k--', label='y=x')
-    plt.legend()
+    plt.legend(fontsize=14)
     
     # Save the figure
     filename = f"{model1_label.replace(' ', '')}2{model2_label.replace(' ', '')}_{metric_name}.png"

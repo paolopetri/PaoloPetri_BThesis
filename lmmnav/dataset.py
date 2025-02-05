@@ -311,7 +311,7 @@ class MapDataset(Dataset):
 
             # for offset:
             x_offset = torch.normal(mean=0.0, std=0.3, size=(num_samples,), device=self.device)  # Shape: [num_samples, 1]
-            y_offset = torch.empty(num_samples, device=self.device).uniform_(-2.0, 2.0)  # Shape: [num_samples, 1]
+            y_offset = torch.empty(num_samples, device=self.device).uniform_(-7.0, 7.0)  # Shape: [num_samples, 1]
             goal_xyz_SE3[:, 0] += x_offset
             goal_xyz_SE3[:, 1] += y_offset
 

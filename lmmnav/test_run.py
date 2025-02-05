@@ -1,4 +1,5 @@
 import torch
+import os
 from torch.utils.data import DataLoader, Subset
 import imageio
 import io
@@ -22,36 +23,36 @@ def main():
         device=device
     )
 
-    # snippet_indices = range(190, 194)
-    # snippet_indices = range(1356, 1388)
-    snippet_indices = range(132 + 34, 228 - 30)
+    #snippet_indices = range(190, 194)
+    snippet_indices = range(1359, 1360)
+    # snippet_indices = range(132 + 34, 228 - 30)
     subset_dataset = Subset(dataset, snippet_indices)
 
     viz_loader = DataLoader(
         subset_dataset,
-        batch_size=16,
+        batch_size=1,
         shuffle=False,
         num_workers=0
     )
 
     # 4) Load your model
     traj_opt = TrajOpt()
-    # model = PlannerNet(32, 5).to(device)
-    # best_model_path = "checkpoints/best_model.pth"
-    # checkpoint = torch.load(best_model_path, map_location=device)
-    # model.load_state_dict(checkpoint)
-    # print(f"Loaded best model from {best_model_path}")
+    model = PlannerNet(32, 5).to(device)
+    best_model_path = "checkpoints/best_model.pth"
+    checkpoint = torch.load(best_model_path, map_location=device)
+    model.load_state_dict(checkpoint)
+    print(f"Loaded best model from {best_model_path}")
 
-    # model.eval()
+    model.eval()
 
-    iplanner_model = iPlannerPlannerNet(16, 5).to(device)
-    iplanner_model_path = "checkpoints/iplanner.pt"
-    iplanner_checkpoint_tuple = torch.load(iplanner_model_path, map_location=device)
-    loaded_model_instance, some_value = iplanner_checkpoint_tuple
-    state_dict = loaded_model_instance.state_dict()
-    iplanner_model.load_state_dict(state_dict)
-    print(f"Loaded iPlanner model from {iplanner_model_path}")
-    iplanner_model.eval()
+    # iplanner_model = iPlannerPlannerNet(16, 5).to(device)
+    # iplanner_model_path = "checkpoints/iplanner.pt"
+    # iplanner_checkpoint_tuple = torch.load(iplanner_model_path, map_location=device)
+    # loaded_model_instance, some_value = iplanner_checkpoint_tuple
+    # state_dict = loaded_model_instance.state_dict()
+    # iplanner_model.load_state_dict(state_dict)
+    # print(f"Loaded iPlanner model from {iplanner_model_path}")
+    # iplanner_model.eval()
 
     voxel_size = 0.15
 
@@ -73,13 +74,14 @@ def main():
             risk_img = risk_img.to(device)
             idx = sample['start_idx']
 
-            goal_position[:, 1] += -0.5
+            goal_position[:, 1] += +7.0
+            goal_position[:, 2] += 0
 
             # Forward pass
-            preds, fear = iplanner_model(depth_img, goal_position)
+            preds, fear = model(depth_img, risk_img, goal_position)
             waypoints = traj_opt.TrajGeneratorFromPFreeRot(preds, step=1.0)
 
-            figs_img = plot_waypoints_on_depth_risk(waypoints, goal_position, depth_img, risk_img, idx, model_name='iPlanner', frame='iPlanner', show=False, save=False)
+            figs_img = plot_waypoints_on_depth_risk(waypoints, goal_position, depth_img, risk_img, idx, model_name='LLMNav', frame='iPlanner', show=False, save=False)
 
             start_idx, waypoints_idxs, goal_idx = prepare_data_for_plotting(
                 waypoints, goal_position, center_position, grid_map, 
@@ -88,36 +90,43 @@ def main():
 
             figs_map = plot_traj_batch_on_map(start_idx, waypoints_idxs, goal_idx, grid_map)
 
-            figs_rgb =plot_single_waypoints_on_rgb(waypoints, goal_position, idx, model_name='iPlanner', frame='iPlanner', show=False, save=True)
+            figs_rgb =plot_single_waypoints_on_rgb(waypoints, goal_position, idx, model_name='LLMNav', frame='iPlanner', show=False, save=True)
+
+            output_dir_combined = "output/image/combined"
+            os.makedirs(output_dir_combined, exist_ok=True)
 
             # Combine figures and write frames directly to GIF
             for fig_img, fig_map in zip(figs_img, figs_map):
                 fig_combined = combine_figures(fig_img, fig_map)
 
-                # Convert figure to image data
-                buf = io.BytesIO()
-                fig_combined.savefig(buf, format='png', dpi=100, bbox_inches='tight')
-                buf.seek(0)
-                frame = imageio.imread(buf)
+                i = idx[0]
+                safe_path = os.path.join(output_dir_combined, f"{i}.png")
+                fig_combined.savefig(safe_path, format='png', dpi=100, bbox_inches='tight')
 
-                writer.append_data(frame)
+            #     # Convert figure to image data
+            #     buf = io.BytesIO()
+            #     fig_combined.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+            #     buf.seek(0)
+            #     frame = imageio.imread(buf)
 
-                # Close figure to free memory
-                plt.close(fig_img)
-                plt.close(fig_map)
-                plt.close(fig_combined)
+            #     writer.append_data(frame)
 
-            for fig_rgb in figs_rgb:
-                # Convert figure to image data
-                buf = io.BytesIO()
-                fig_rgb.savefig(buf, format='png', dpi=100, bbox_inches='tight')
-                buf.seek(0)
-                frame_rgb = imageio.imread(buf)
+            #     # Close figure to free memory
+            #     plt.close(fig_img)
+            #     plt.close(fig_map)
+            #     plt.close(fig_combined)
 
-                writer_rgb.append_data(frame_rgb)
+            # for fig_rgb in figs_rgb:
+            #     # Convert figure to image data
+            #     buf = io.BytesIO()
+            #     fig_rgb.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+            #     buf.seek(0)
+            #     frame_rgb = imageio.imread(buf)
 
-                # Close figure to free memory
-                plt.close(fig_rgb)
+            #     writer_rgb.append_data(frame_rgb)
+
+            #     # Close figure to free memory
+            #     plt.close(fig_rgb)
 
     
 

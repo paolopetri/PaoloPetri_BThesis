@@ -1,3 +1,4 @@
+
 import torch
 from torch import optim
 from torch.utils.data import DataLoader, random_split, ConcatDataset
@@ -9,7 +10,6 @@ import yaml
 import wandb
 from tqdm import tqdm
 from pprint import pprint
-# Import your dataset and other modules
 from dataset import MapDataset
 from planner_net import PlannerNet
 from utils import CostofTraj, TransformPoints2Grid, Pos2Ind
@@ -24,7 +24,7 @@ def load_config_from_yaml(yaml_path):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Train PlannerNet with wandb sweeps.")
-    # General training hyperparameters
+    # General training parameters
     parser.add_argument('--num_epochs', type=int, default=60)
     parser.add_argument('--batch_size', type=int, default=128)
     parser.add_argument('--num_workers', type=int, default=8)
@@ -62,7 +62,7 @@ def main():
             setattr(args, key, value)
 
     wandb.init(
-        project="LMM_Navigation",
+        project="LLM_Nav",
         config = {
             "num_epochs": args.num_epochs,
             "batch_size": args.batch_size,
@@ -172,7 +172,7 @@ def main():
 
     # Initialize variables for checkpointing and early stopping
     best_val_loss = float('inf')
-    patience = 80
+    patience =10
     trigger_times = 0
 
     # Training loop
