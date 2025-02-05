@@ -1,3 +1,11 @@
+"""
+utils_viz.py
+
+This module contains utility functions for visualization.
+
+Author: [Paolo Petri]
+Date: [07.02.2025]
+"""
 import os
 import torch
 import matplotlib.pyplot as plt
@@ -6,7 +14,19 @@ import io
 from PIL import Image
 import math
 
-def rotation_x(theta_degrees: float, device=torch.device('cpu')):
+def rotation_x(theta_degrees: float, device: torch.device = torch.device('cpu')) -> torch.Tensor:
+    """
+    Generate a 3x3 rotation matrix around the x-axis, given an angle in degrees.
+
+    Args:
+        theta_degrees (float): The rotation angle around the x-axis in degrees.
+        device (torch.device, optional): The device on which the resulting tensor
+            will be allocated. Defaults to CPU.
+
+    Returns:
+        torch.Tensor: A 3x3 rotation matrix representing the specified rotation
+        around the x-axis.
+    """
     theta = math.radians(theta_degrees)
     return torch.tensor([
         [1, 0,           0          ],
@@ -46,8 +66,15 @@ def project_points(points_3d, P):
 
     return points_2d
 
-def plot_single_waypoints_on_rgb(waypoints_batch, goal_positions_batch, idx, model_name, frame, show=False, save=True, 
-                  output_dir='output/image/single'):
+def plot_single_waypoints_on_rgb(waypoints_batch: torch.tensor,
+                                goal_positions_batch: torch.tensor,
+                                idx: torch.tensor,
+                                model_name: str,
+                                frame: str,
+                                show: bool = False,
+                                save: bool = True, 
+                                output_dir: str = 'output/image/single'
+) -> list[plt.Figure]:
     """
     Projects and plots batched 3D waypoints and goal positions onto corresponding 2D images.
 
@@ -62,6 +89,10 @@ def plot_single_waypoints_on_rgb(waypoints_batch, goal_positions_batch, idx, mod
 
     Returns:
     - figures: list of Matplotlib Figure objects corresponding to each batch.
+
+    Note:
+    - The projection matrix P is hardcoded for the LLMNav camera.
+    - The adaptations had to been made to allow for visualization in the iPlanner frame.
     """
     # Define the projection matrix P as a PyTorch tensor
     device = waypoints_batch.device
@@ -142,17 +173,10 @@ def plot_single_waypoints_on_rgb(waypoints_batch, goal_positions_batch, idx, mod
         trajectory_2d_valid = project_points(trajectory_3d_standard, P)
 
         # Project the goal position to 2D pixel coordinates
-        goal_2d = project_points(goal_3d_standard.unsqueeze(0), P)  # Shape: (1, 2)
-        goal_2d_np = goal_2d.cpu().numpy()[0]  # Convert to (2,)
-
-        # Convert the projected 2D waypoints to NumPy for plotting
+        goal_2d = project_points(goal_3d_standard.unsqueeze(0), P) 
+        goal_2d_np = goal_2d.cpu().numpy()[0] 
         trajectory_2d_valid_np = trajectory_2d_valid.cpu().numpy()
-
-
-        # Plot the projected trajectory
         fig, ax = plt.subplots(figsize=(12, 8))
-        
-        # Display the image
         ax.imshow(image)
         
         # Plot the trajectory points
@@ -194,17 +218,17 @@ def plot_single_waypoints_on_rgb(waypoints_batch, goal_positions_batch, idx, mod
 
 
 def plot_waypoints_on_depth_risk(
-    waypoints_batch,
-    goal_positions_batch,
-    depth_images_batch,
-    risk_images_batch,
-    idx,
-    model_name,
-    frame,
-    show=False,
-    save=True,
-    output_dir='output/image/depth_risk'
-):
+    waypoints_batch: torch.tensor,
+    goal_positions_batch: torch.tensor,
+    depth_images_batch: torch.tensor,
+    risk_images_batch: torch.tensor,
+    idx: torch.tensor,
+    model_name: str,
+    frame: str,
+    show: bool = False,
+    save: bool = True,
+    output_dir: str = 'output/image/depth_risk'
+    )-> list[plt.Figure]:
     """
     Projects and plots batched 3D waypoints and goal positions onto corresponding depth and risk images.
 
@@ -289,7 +313,6 @@ def plot_waypoints_on_depth_risk(
         goal_2d = project_points(goal_3d_standard.unsqueeze(0), P)  # Shape: (1, 2)
         goal_2d_np = goal_2d.cpu().numpy()[0]  # Convert to (2,)
 
-        # Convert the projected 2D waypoints to NumPy for plotting
         trajectory_2d_valid_np = trajectory_2d_valid.cpu().numpy()
 
         # Ensure depth_image and risk_image are NumPy arrays and rearrange dimensions if necessary
@@ -376,7 +399,7 @@ def plot_traj_batch_on_map(
     grid_maps: torch.Tensor,
     save: bool = False,
     output_dir: str = 'output/map'
-):
+)-> list[plt.Figure]:
     """
     Plots the Traversability and Risk map for each item in a batch.
     Returns a list of Matplotlib Figure objects, one figure per batch item.
@@ -449,6 +472,13 @@ def combine_figures(fig_img: plt.Figure, fig_map: plt.Figure) -> plt.Figure:
     """
     Combines two existing Matplotlib Figure objects (fig_img, fig_map)
     by converting each to a PIL image and placing them in a new 2-row figure.
+
+    Args:
+        fig_img: Matplotlib Figure object for the image plot.
+        fig_map: Matplotlib Figure object for the map plot.
+
+    Returns:
+        fig: Matplotlib Figure object with two subplots, one for each input figure.
     """
     # 1) Convert fig_img to a PIL Image
     buf_img = io.BytesIO()
@@ -485,10 +515,18 @@ def create_gif_from_figures(
     figures: list,
     output_path: str,
     fps: int = 1
-):
+)-> None:
     """
     Takes a list of Matplotlib Figures, converts each to a PIL image, 
     and saves them all as a GIF at output_path.
+
+    Args:
+        figures: List of Matplotlib Figure objects.
+        output_path: Path to save the GIF file.
+        fps: Frames per second
+
+    Returns:
+        None
     """
     frames = []
     for fig in figures:
@@ -516,7 +554,7 @@ def comparison_plot_on_map(
     grid_maps: torch.Tensor,
     model_name1: str,
     model_name2: str
-    ):
+    )-> list[plt.Figure]:
         """
         Plots traversability and risk maps for each batch item, overlaying two trajectories from different models.
         
@@ -594,7 +632,13 @@ def comparison_plot_on_map(
 
         return figs
 
-def plot_loss_comparison(x_losses, y_losses, metric_name, model1_label="Model 1", model2_label="Model 2", save_dir="output/Comparison"):
+def plot_loss_comparison(x_losses: list,
+                         y_losses: list,
+                         metric_name: str,
+                         model1_label: str = "Model 1",
+                         model2_label: str = "Model 2",
+                         save_dir: str = "output/Comparison"
+                         ) -> None:
     """
     Plots the losses for a specific metric of two models against each other for each batch and saves the plot.
     
@@ -605,6 +649,9 @@ def plot_loss_comparison(x_losses, y_losses, metric_name, model1_label="Model 1"
         model1_label (str): Label for the first model.
         model2_label (str): Label for the second model.
         save_dir (str): Directory where plots will be saved.
+
+    Returns:
+        None
     """
     import os
     import matplotlib.pyplot as plt

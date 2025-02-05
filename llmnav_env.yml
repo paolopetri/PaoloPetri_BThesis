@@ -186,4 +186,3 @@ dependencies:
     - tenacity==8.2.2
     - wcwidth==0.2.6
     - werkzeug==2.2.3
-prefix: /home/fanyang/anaconda3/envs/iplanner

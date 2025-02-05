@@ -25,7 +25,7 @@ class MapDataset(Dataset):
     """
     The MapDataset class loads and prepares data for a navigation model, including:
       - Traversability, risk, and elevation maps (stacked into one tensor).
-      - Depth and risk images (optionally transformed).
+      - Depth and risk images.
       - Center positions in the grid frame.
       - Camera-to-world and world-to-grid transformations.
       - Goal positions, optionally randomized.
@@ -33,27 +33,19 @@ class MapDataset(Dataset):
     Args:
         data_root (str): Path to the root directory containing map and image data.
         random_goals (bool, optional): If True, applies random perturbations to goal positions.
-        transform (callable, optional): Torchvision-like transform for depth/risk images.
         device (torch.device, optional): Device on which tensors will be placed (CPU/GPU).
 
     Attributes:
         data_root (str): Root directory for data.
-        transform (callable): Transform operations for images.
         device (torch.device): Device for all loaded tensors.
-        center_positions (torch.Tensor): (N, 2) center coordinates in the grid frame.
-        t_cam_to_world_SE3 (pp.SE3): (N,) camera-to-world transformations as pypose SE3.
-        goal_positions (torch.Tensor): (N, 3) goal positions in the start frame.
-        t_world_to_grid_SE3 (pp.SE3): (N,) world-to-grid transformations as pypose SE3.
+        center_positions (torch.Tensor): (num_samples, 2) center coordinates in the grid frame.
+        t_cam_to_world_SE3 (pp.SE3): (num_samples,) camera-to-world transformations as pypose SE3.
+        goal_positions (torch.Tensor): (num_samples, 3) goal positions in the start frame.
+        t_world_to_grid_SE3 (pp.SE3): (num_samples,) world-to-grid transformations as pypose SE3.
     """
     def __init__(self, data_root: str, random_goals: bool = False, transform = None, device: torch.device = None) -> None:
 
         self.data_root = data_root
-      
-        # Define default transform if none provided
-        self.transform = transform if transform is not None else transforms.Compose([
-            transforms.Resize((360, 640)),  # Resize to [360, 640]
-            transforms.ToTensor()           # Convert PIL Image to Tensor and scale pixel values to [0, 1]
-        ])
       
         self.device = device if device is not None else torch.device('cpu')
     
@@ -123,7 +115,7 @@ class MapDataset(Dataset):
             sigma (float, optional): Standard deviation for Gaussian blurring.
 
         Returns:
-            tuple: (traversability_map, risk_map, elevation_map) as torch.Tensor objects of shape (N, H, W).
+            tuple: (traversability_map, risk_map, elevation_map) as torch.Tensor objects of shape (num_samples, H, W).
         """
         elevation_dir = os.path.join(self.data_root, 'maps', 'elevation')
         traversability_dir = os.path.join(self.data_root, 'maps', 'traversability')
@@ -249,7 +241,7 @@ class MapDataset(Dataset):
         Returns:
             pp.SE3: A batch of SE(3) transformations of shape [num_samples, 7].
         """
-        filepath = os.path.join(self.data_root, 't_cam_to_world.txt')
+        filepath = os.path.join(self.data_root, 'base_to_world_transforms..txt')
         t_base_to_world = np.loadtxt(filepath, delimiter=',')  # Shape: (num_samples, 7)
         t_base_to_world_tensor = torch.tensor(t_base_to_world, dtype=torch.float32, device=self.device)
         t_base_to_world_SE3 = pp.SE3(t_base_to_world_tensor)  # Shape: [num_samples, 7]
@@ -275,7 +267,7 @@ class MapDataset(Dataset):
             random_goals (bool, optional): If True, randomly perturb the x/z coordinates.
 
         Returns:
-            torch.Tensor: (N, 3) positions in the camera frame.
+            torch.Tensor: (num_samples, 3) positions in the camera frame.
         """
 
         t_cam_to_world_SE3 = self.t_cam_to_world_SE3  # Shape: [num_samples]

@@ -174,15 +174,10 @@ def main() -> None:
     zeta = config.zeta
     min_gamma = config.min_gamma
 
-    # Initialize the dataset with transformations
-    transform = transforms.Compose([
-        transforms.Resize((360, 640)),
-        transforms.ToTensor()
-    ])
     # Initialize the dataset
-    höngg_data = MapDataset(data_root='TrainingData/Hönggerberg', random_goals=True, transform=transform)
-    seealpsee_data = MapDataset(data_root='TrainingData/seealpsee', random_goals=True, transform=transform)
-    in2out1_data = MapDataset(data_root='TrainingData/in-to-out-1', random_goals=True, transform=transform)
+    höngg_data = MapDataset(data_root='TrainingData/Hönggerberg', random_goals=True)
+    seealpsee_data = MapDataset(data_root='TrainingData/seealpsee', random_goals=True)
+    in2out1_data = MapDataset(data_root='TrainingData/in-to-out-1', random_goals=True)
     # important_data = MapDataset(data_root='TrainingData/Important', transform=transform)
     full_dataset = ConcatDataset([höngg_data, seealpsee_data, in2out1_data])
 

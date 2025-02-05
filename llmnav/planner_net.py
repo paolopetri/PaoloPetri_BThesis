@@ -1,5 +1,3 @@
-
-
 import torch
 from percept_net import PerceptNet
 import torch.nn as nn

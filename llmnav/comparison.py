@@ -52,7 +52,6 @@ def main() -> NoReturn:
     dataset = MapDataset(
         data_root=data_root,
         random_goals=False,
-        transform=None,
         device=device
     )
 

@@ -47,7 +47,6 @@ def main() -> None:
     # 1) Create dataset
     dataset = MapDataset(
         data_root=data_root,
-        transform=None,
         device=device
     )
 
@@ -101,14 +100,15 @@ def main() -> None:
             risk_img = risk_img.to(device)
             idx = sample['start_idx']
 
-            goal_position[:, 1] += +7.0
-            goal_position[:, 2] += 0
+            # Optional: permute goals in camera frame
+            # goal_position[:, 0] += +7.0
+            # goal_position[:, 2] += 0
 
             # Forward pass
             preds, fear = model(depth_img, risk_img, goal_position)
             waypoints = traj_opt.TrajGeneratorFromPFreeRot(preds, step=1.0)
 
-            figs_img = plot_waypoints_on_depth_risk(waypoints, goal_position, depth_img, risk_img, idx, model_name='LLMNav', frame='iPlanner', show=False, save=False)
+            figs_img = plot_waypoints_on_depth_risk(waypoints, goal_position, depth_img, risk_img, idx, model_name='LLMNav', frame='LLMNav', show=False, save=False)
 
             start_idx, waypoints_idxs, goal_idx = prepare_data_for_plotting(
                 waypoints, goal_position, center_position, grid_map, 
@@ -117,7 +117,7 @@ def main() -> None:
 
             figs_map = plot_traj_batch_on_map(start_idx, waypoints_idxs, goal_idx, grid_map)
 
-            figs_rgb =plot_single_waypoints_on_rgb(waypoints, goal_position, idx, model_name='LLMNav', frame='iPlanner', show=False, save=True)
+            figs_rgb =plot_single_waypoints_on_rgb(waypoints, goal_position, idx, model_name='LLMNav', frame='LLMNAV', show=False, save=True)
 
             output_dir_combined = "output/image/combined"
             os.makedirs(output_dir_combined, exist_ok=True)
