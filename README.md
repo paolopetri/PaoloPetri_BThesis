@@ -24,35 +24,32 @@ The data collection consists of two parts. First, the data needs to be extraced 
    ```bash
    cd <your_llmnav_path>/data_collection
    ```
+
+2. **Create data_ext Environment**  
    Refer to the `INSTALL.md` file in this directory to set up your `data_ext` environment.
 
-2. **Start the Roscore**  
+3. **Start the Roscore**  
    In your first terminal:
    ```bash
    roscore
    ```
 
-3. **Play the Bag File**  
+4. **Play the Bag File**  
    In a second terminal, replay your bag file at a slower rate:
    ```bash
    rosbag play your_bagfile.bag --clock -r 0.3
    ```
 
-4. **Run `data_extraction.py`**  
+5. **Run `data_extraction.py`**  
    Shortly after step 3, in a third terminal, activate the `data_ext` environment and run the extraction script:
    ```bash
    conda activate data_ext
    python3 data_extraction.py
    ```
 
-5. **Saving EnvironmentData**
+6. **Saving EnvironmentData**
     You can now save the `/EnvironmentData` folder into the `./llmnav/TrainingData` folder and rename it acoordingly. If you have another rosbag
     file repeat the process.
-
-### Depth Image Generation
-
-Go to the [**Depth-Anything-V2**](https://github.com/DepthAnything/Depth-Anything-V2) GitHub page, clone the repository and follow the installation requirements. Copy the `<your_llmnav_path>/data_collection/depth_generation.py` file into the Depth-Anything-V2 root folder. In that same root folder create a folder called checkpoints and copy the Depth-Anything-V2-Large model, that you can download form their GitHub page into the checkpoints folder.
-Copy the `EnvironmentData/camera` folder into the depth-anything-v2 root folder. Activate your depth-anything-v2 conda environment and run python3 depth_generation.py. Finally, copy the depth_images folder that has all the depth images, back into the EnvionmentData/ folder.
 
 ### Depth Image Generation
 
@@ -80,7 +77,6 @@ Copy the `EnvironmentData/camera` folder into the depth-anything-v2 root folder.
 
 7. **Retrieve Generated Depth Images**
    Once the script completes, copy the newly generated `depth_images` folder from the Depth-Anything-V2 repository back into the `EnvironmentData` folder within you LLM Nav directory.
-
 ---
 
 #### Training Data Directory Structure
@@ -147,3 +143,34 @@ python3 test_run.py
 You will find the visualizations in the `ouput` folder.
 
 ## Comparison to iPlanner
+Go to the **llmnav** folder
+
+    cd <your_llmnav_path>/lmmnav
+
+This repository also allows for comparisons to [**iPlanner: Imperative Path Planning**](https://github.com/leggedrobotics/iPlanner).
+
+1.  **Follow Modifications below**
+
+2.  **Train Model again!**
+    Follow the **Training** chapter to train the model with the offset.
+
+3.  **Download iPlanner's Weights**
+    From the iPlanner's GitHub page, download its pre-trained models. Copy the weights into the `checkpoints` folder.
+
+4.  **Run the Comparison**
+    ```
+    conda activate llmnav
+    python3 comparison.py
+    ```
+
+You find the comparisons in the `output/comparison` folder.
+
+### Modifications
+
+Since the iPlanner is not planning in the camera frame but with a fixed offset from the base link, we need to adapt the code to also plan in that offset.
+
+1.  **Change Static Transform**
+    In `dataset.py` comment line 250 and uncomment line 253.
+
+2.  **Change Random Goal Permutation**
+    In `dataset.py` comment lines 291-294 and uncomment lines 297-300.

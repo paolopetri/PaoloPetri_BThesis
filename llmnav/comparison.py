@@ -13,6 +13,8 @@ Usage Example:
 Author: [Paolo Petri]
 Date: [07.02.2025]
 """
+import os
+
 import torch
 from torch.utils.data import DataLoader, Subset
 import numpy as np
@@ -46,6 +48,7 @@ def main() -> NoReturn:
     Returns:
         None
     """
+    # TODO: Update data_root to the correct path
     data_root = 'TrainingData/Important'
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -55,10 +58,10 @@ def main() -> NoReturn:
         device=device
     )
 
-    
+    # TODO: Update snippet_indices to the desired range of snippets to evaluate
     # snippet_indices = range(132 + 34, 228 - 30)
-    snippet_indices = range(0, 1517 - 31)
-    # snippet_indices = range(220, 252)
+    # snippet_indices = range(0, 1517 - 31)
+    snippet_indices = range(220, 252)
     subset_dataset = Subset(dataset, snippet_indices)
 
     comp_loader = DataLoader(
@@ -76,7 +79,7 @@ def main() -> NoReturn:
     delta = 1.0
     zeta = 1.0
 
-    best_model_path = "checkpoints/best_model.pth" # does not work with planning in the camera frame!
+    best_model_path = "checkpoints/best_model_smallpermutation.pth" # does not work with planning in the camera frame!
     checkpoint = torch.load(best_model_path, map_location=device)
     model.load_state_dict(checkpoint)
     print(f"Loaded best model from {best_model_path}")
@@ -158,7 +161,8 @@ def main() -> NoReturn:
             # Visualize both trajectories on the maps
 
             figs = comparison_plot_on_map(start_idxs, grid_idxs, iplanner_grid_idxs, goal_idxs, grid_map, "LMM Nav", "iPlanner Nav")
-            output_path = f"output/Comparison/iPlanner/GIF/{i}.gif"
+            output_path = f"output/Comparison/GIF/{i}.gif"
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
             create_gif_from_figures(figs, output_path, fps = 2)
 
             # Calculate the trajectory cost for iPlanner
@@ -199,13 +203,15 @@ def main() -> NoReturn:
 
             print(f"[Batch iPlanner {i}] - Processed {len(figs)} images.")
     for comp in loss_components:
+        save_dir = "output/Comparison/Losses"
+        os.makedirs(save_dir, exist_ok=True)
         plot_loss_comparison(
             model1_losses[comp],
             model2_losses[comp],
             metric_name=comp,
             model1_label="LLM Nav",
             model2_label="iPlanner",
-            save_dir = "output/Comparison/iPlanner/Losses"
+            save_dir = save_dir
         )
         results = {
         "LLM Nav": {},

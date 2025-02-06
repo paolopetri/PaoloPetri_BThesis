@@ -17,7 +17,6 @@ import torch
 from torch.utils.data import Dataset
 import numpy as np
 import pypose as pp
-import torchvision.transforms as transforms
 import torchvision.transforms.functional as TF
 from scipy.ndimage import gaussian_filter
 
@@ -252,6 +251,7 @@ class MapDataset(Dataset):
 
         # For comparison to iPlanner:
         # t_cam_to_base = torch.tensor([0.4, 0, 0, 0, 0, 0, 1], dtype=torch.float32, device=self.device) # Shape: [7] # for iPlanner Frame
+        
         t_cam_to_base_batch = pp.SE3(t_cam_to_base.unsqueeze(0).repeat(t_base_to_world.shape[0], 1))  # Shape: [num_samples, 7]
 
         t_cam_to_world_SE3 = t_base_to_world_SE3 @ t_cam_to_base_batch  # Shape: [num_samples, 7]
