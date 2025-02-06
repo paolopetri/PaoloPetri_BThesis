@@ -1,3 +1,32 @@
+"""
+data_extraction.py
+
+This script automates the process of collecting and storing data from a rosbag
+for navigation-related tasks. It subscribes to topics that provide:
+
+• **RGB Images** (compressed): Saved as PNG files for visual reference or model training.
+• **Risk Images**: Converted to NumPy arrays (.npy) to preserve floating-point detail.
+• **Grid Map**: Specific layers (elevation, traversability, risk) are extracted, stored with high precision, and accompanied by metadata (e.g., center positions).
+• **Odometry**: Position and orientation data for each frame, exported to a text file.
+• **Camera Intrinsics**: Captured once per session from the `/hdr_camera_front/camera_info` topic.
+• **Transforms** (via `extract_and_save_transforms`): Records transformations between
+  `odom` and `map_o3d_localization_manager` to align sensor data with the grid map.
+
+**Core Workflow**:
+1. **Initialize ROS Node**: Sets up subscribers for RGB, risk images, odometry, and grid map data.
+2. **Message Caching**: Stores the latest received messages, ensuring synchronous extraction.
+3. **Data Extraction**: Converts messages to usable formats (e.g., PNG, NumPy arrays, text) and saves them to a structured folder hierarchy (`./EnvironmentData/` by default).
+4. **Handling Transforms**: Calls `extract_and_save_transforms` to save the transform between `odom` and `map_o3d_localization_manager`, ensuring consistency between pose, map, and image data.
+5. **Spinning**: Keeps the node alive to continually process new incoming data until manually stopped.
+
+This script is fundamental for collecting synchronized, labeled data from various
+ROS topics, making it easy to train and evaluate navigation models.
+
+Usage: Refer to the README for detailed instructions on running the script.
+
+Author: [Paolo Petri]
+Date: [07.02.2025]
+"""
 import rospy
 import os
 import cv2
@@ -29,6 +58,7 @@ latest_risk_msg = None
 latest_odom_msg = None
 camera_info_saved = False
 
+
 # Lock to ensure thread safety
 data_lock = threading.Lock()
 
@@ -40,14 +70,14 @@ camera_info_topic = '/hdr_camera_front/camera_info'
 grid_map_topic = '/elevation_mapping_large/elevation_map_raw'
 
 # Folder structure
-root_folder = './TrainingData'  # Update with your desired path
+root_folder = './EnvironmentData'  # Update with your desired path
 camera_folder = os.path.join(root_folder, 'camera')
-risk_image_folder = os.path.join(root_folder, 'risk_image')
+risk_image_folder = os.path.join(root_folder, 'risk_images')
 maps_data_folder = os.path.join(root_folder, 'maps')
-odom_file = os.path.join(root_folder, 'odom_ground_truth.txt')
+odom_file = os.path.join(root_folder, 'base_to_world_transforms.txt')
 camera_intrinsic_file = os.path.join(root_folder, 'camera_intrinsic.txt')
-center_position_file = os.path.join(root_folder, 'center_positions.txt')  # New file for center positions
-odom_to_map_transform_file = os.path.join(root_folder, 'odom_to_map_transform.txt')  # New file for transforms
+center_position_file = os.path.join(maps_data_folder, 'center_positions.txt')  # New file for center positions
+odom_to_map_transform_file = os.path.join(maps_data_folder, 'world_to_grid_transforms.txt')  # New file for transforms
 
 # Create folders
 for folder in [camera_folder, risk_image_folder, maps_data_folder]:
@@ -88,9 +118,9 @@ def extract_and_save_data(rgb_msg, risk_msg, map_msg, odom_msg):
     global idx
     extract_and_save_rgb_image(rgb_msg, idx)
     extract_and_save_risk_image(risk_msg, idx)
-    extract_and_save_map_layers(map_msg, idx)
+    frame_is_odom = extract_and_save_map_layers(map_msg, idx)
     extract_and_save_odometry(odom_msg, idx)
-    save_camera_extrinsics(idx)  # Call the modified extrinsic saving function
+    extract_and_save_transforms(idx, frame_is_odom)  # Call the modified extrinsic saving function
     idx += 1
 
 # Grid map callback
@@ -132,7 +162,7 @@ def extract_and_save_risk_image(risk_msg, idx):
     Extracts and saves the risk image as a NumPy array (.npy file) to preserve floating-point values.
     
     Parameters:
-    - risk_msg: The ROS Image message containing the risk map.
+    - risk_msg: The ROS Image message containing the risk image.
     - idx: An index used to name the output files uniquely.
     """
     try:
@@ -154,23 +184,28 @@ def extract_and_save_risk_image(risk_msg, idx):
 
 
 
-def extract_and_save_map_layers(map_msg, idx):
+def extract_and_save_map_layers(map_msg, idx) -> bool:
     """
-    Extracts specified layers from a GridMap message and saves them as text files.
-    Each layer's data is saved in its 2D grid form, preserving the x and y indices.
-    The data is saved with high precision in exponential notation.
-    
-    Additionally, replaces NaN values with 0 in the 'traversability' layer and
-    saves the center position (x, y) of the grid map.
-    
+    Extracts and saves specified layers from a GridMap message into text files and stores 
+    the grid map's center position. The function processes the 'elevation', 'traversability', 
+    and 'risk' layers by reshaping their data into a 2D grid, formatting values in high-precision 
+    exponential notation, and replacing NaN values with 0 for the 'traversability' layer.
+
+    Additionally, it logs the center position and the processing status of each layer.
+
     Parameters:
-    - map_msg: The GridMap message containing the map data.
-    - idx: An index used to name the output files uniquely.
-    
-    The data is saved in text files with one row per y-index (row in the grid),
-    and each value in the row corresponds to an x-index (column in the grid).
-    Values are formatted with high precision in exponential notation, e.g., 8.405537009239196777e+00.
+        map_msg: The GridMap message containing the map data.
+        idx (int): An index used to uniquely name the output files.
+
+    Side Effects:
+        - Appends the center position (x, y) to a 'center_positions.txt' file.
+        - Creates and writes text files for each desired map layer in a specified folder structure.
+        - Logs informational and error messages via rospy.
+
+    Returns:
+        bool: True if the GridMap's frame_id is 'odom', otherwise False.
     """
+
     layers = map_msg.layers
     desired_layers = ['elevation', 'traversability', 'risk']
 
@@ -181,6 +216,14 @@ def extract_and_save_map_layers(map_msg, idx):
     length_y = info.length_y
     position_x = info.pose.position.x
     position_y = info.pose.position.y
+
+    frame_id = info.header.frame_id
+    rospy.loginfo(f"Frame ID of Grid Maps: {frame_id}")
+    if frame_id == 'odom':
+        frame_is_odom = True
+    else:
+        frame_is_odom = False
+    
 
     # Save center positions to 'center_positions.txt'
     try:
@@ -237,6 +280,8 @@ def extract_and_save_map_layers(map_msg, idx):
         else:
             rospy.logwarn(f"Layer '{layer}' not found in map message.")
 
+    return frame_is_odom
+
 
 def extract_and_save_odometry(odom_msg, idx):
     """
@@ -255,15 +300,15 @@ def extract_and_save_odometry(odom_msg, idx):
 # Save camera intrinsics and extrinsics
 def save_camera_intrinsics():
     """
-    Saves the camera intrinsic parameters to a file.
+    Saves the camera's P matrix to a file.
     """
     global camera_info_saved
     if camera_info_saved:
         return
     try:
         camera_info_msg = rospy.wait_for_message(camera_info_topic, CameraInfo, timeout=5.0)
-        K = np.array(camera_info_msg.K).reshape(3, 3)
-        np.savetxt(camera_intrinsic_file, K, delimiter=',')
+        P = np.array(camera_info_msg.P).reshape(3, 4)
+        np.savetxt(camera_intrinsic_file, P, delimiter=',')
         camera_info_saved = True
         rospy.loginfo("Camera intrinsics saved.")
     except rospy.ROSException:
@@ -271,28 +316,36 @@ def save_camera_intrinsics():
     except Exception as e:
         rospy.logerr(f"Failed to save camera intrinsics: {e}")
 
-def save_camera_extrinsics(idx):
+def extract_and_save_transforms(idx: int, frame_is_odom: bool) -> None:
     """
     Extracts and saves the latest transform from 'odom' to 'map_o3d_localization_manager'.
     
+    If the frame is not 'odom', the function attempts to look up the transform between 'odom' 
+    and 'map_o3d_localization_manager' and saves the translation and rotation (as a quaternion) 
+    to a file. If the frame is 'odom', it saves an identity transform instead.
+
     Parameters:
-    - idx: An index used to name the output files uniquely.
+        idx (int): An index used to uniquely name or associate the saved transform with a data sample.
+        frame_is_odom (bool): A flag indicating whether the grid map's frame ID is 'odom'.
+                              - If False, the function will try to extract the transform.
+                              - If True, the function will save an identity transform.
     """
-    try:
-        
-        trans, rot = tf_listener_dep.lookupTransform('odom', 'map_o3d_localization_manager', rospy.Time(0))  # Fill the buffer
-        print(trans)
+    if not frame_is_odom:
+        try:
+            trans, rot = tf_listener_dep.lookupTransform('odom', 'map_o3d_localization_manager', rospy.Time(0))  # Fill the buffer
+            print(trans)
 
-        # Save the transform with the current idx
-        with open(odom_to_map_transform_file, 'a') as f:
-            f.write(f'{trans[0]},{trans[1]},{trans[2]},{rot[0]},{rot[1]},{rot[2]},{rot[3]}\n')
+            # Save the transform with the current idx
+            with open(odom_to_map_transform_file, 'a') as f:
+                f.write(f'{trans[0]},{trans[1]},{trans[2]},{rot[0]},{rot[1]},{rot[2]},{rot[3]}\n')
 
-        rospy.loginfo(f"Transform for idx {idx} saved successfully at {odom_to_map_transform_file}")
+            rospy.loginfo(f"Transform for idx {idx} saved successfully at {odom_to_map_transform_file}")
 
-    except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
-        rospy.logwarn(f"Transform from 'base' to 'odom' not found for idx {idx}: {e}")
-        # Optionally, implement a retry mechanism or skip saving the transform
-
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
+            rospy.logwarn(f"Transform from 'odom' to 'map_o3d_localization_manager' not found for idx {idx}: {e}")
+    elif frame_is_odom:
+            with open (odom_to_map_transform_file, 'a') as f:
+                f.write('0,0,0,0,0,0,1\n')
 
 # Initialize camera intrinsics
 camera_info_saved = False  # Initialize the flag

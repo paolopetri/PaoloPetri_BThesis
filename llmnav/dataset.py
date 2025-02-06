@@ -241,13 +241,16 @@ class MapDataset(Dataset):
         Returns:
             pp.SE3: A batch of SE(3) transformations of shape [num_samples, 7].
         """
-        filepath = os.path.join(self.data_root, 'base_to_world_transforms..txt')
+        filepath = os.path.join(self.data_root, 'base_to_world_transforms.txt')
         t_base_to_world = np.loadtxt(filepath, delimiter=',')  # Shape: (num_samples, 7)
         t_base_to_world_tensor = torch.tensor(t_base_to_world, dtype=torch.float32, device=self.device)
         t_base_to_world_SE3 = pp.SE3(t_base_to_world_tensor)  # Shape: [num_samples, 7]
 
         # Define the static transform from camera link to base link frame
+        # TODO: Update this transform based on the actual camera-to-base link calibration
         t_cam_to_base = torch.tensor([-0.460, -0.002, 0.115, 0.544, 0.544, -0.453, -0.451], dtype=torch.float32, device=self.device) # base2cam
+
+        # For comparison to iPlanner:
         # t_cam_to_base = torch.tensor([0.4, 0, 0, 0, 0, 0, 1], dtype=torch.float32, device=self.device) # Shape: [7] # for iPlanner Frame
         t_cam_to_base_batch = pp.SE3(t_cam_to_base.unsqueeze(0).repeat(t_base_to_world.shape[0], 1))  # Shape: [num_samples, 7]
 

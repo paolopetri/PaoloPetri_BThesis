@@ -32,7 +32,7 @@ def CostofTraj(
     delta: float = 1.0,
     zeta: float = 1.0,
     is_map: bool = True
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Compute a multi-component cost for predicted trajectories and generate fear labels
     (binary indicators of potential obstacle/risk). 

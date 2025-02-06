@@ -13,6 +13,7 @@ import imageio
 import io
 from PIL import Image
 import math
+from typing import List
 
 def rotation_x(theta_degrees: float, device: torch.device = torch.device('cpu')) -> torch.Tensor:
     """
@@ -74,7 +75,7 @@ def plot_single_waypoints_on_rgb(waypoints_batch: torch.tensor,
                                 show: bool = False,
                                 save: bool = True, 
                                 output_dir: str = 'output/image/single'
-) -> list[plt.Figure]:
+) -> List[plt.Figure]:
     """
     Projects and plots batched 3D waypoints and goal positions onto corresponding 2D images.
 
@@ -228,7 +229,7 @@ def plot_waypoints_on_depth_risk(
     show: bool = False,
     save: bool = True,
     output_dir: str = 'output/image/depth_risk'
-    )-> list[plt.Figure]:
+    )-> List[plt.Figure]:
     """
     Projects and plots batched 3D waypoints and goal positions onto corresponding depth and risk images.
 
@@ -399,7 +400,7 @@ def plot_traj_batch_on_map(
     grid_maps: torch.Tensor,
     save: bool = False,
     output_dir: str = 'output/map'
-)-> list[plt.Figure]:
+)-> List[plt.Figure]:
     """
     Plots the Traversability and Risk map for each item in a batch.
     Returns a list of Matplotlib Figure objects, one figure per batch item.
@@ -554,7 +555,7 @@ def comparison_plot_on_map(
     grid_maps: torch.Tensor,
     model_name1: str,
     model_name2: str
-    )-> list[plt.Figure]:
+    )-> List[plt.Figure]:
         """
         Plots traversability and risk maps for each batch item, overlaying two trajectories from different models.
         

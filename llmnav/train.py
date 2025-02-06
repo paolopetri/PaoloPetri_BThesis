@@ -19,7 +19,6 @@ import torch
 from torch import optim
 from torch.utils.data import DataLoader, random_split, ConcatDataset
 import torch.nn.functional as F
-import torchvision.transforms as transforms
 
 import wandb
 from tqdm import tqdm
@@ -59,6 +58,8 @@ def parse_args() -> argparse.Namespace:
     # General training parameters
     parser.add_argument('--num_epochs', type=int, default=80,
                         help='Number of training epochs.')
+    parser.add_argument('--patience', type=int, default=10,
+                        help='Number of epochs to wait for improvement in validation loss.')
     parser.add_argument('--min_gamma', type=float, default=0,
                         help='Minimum improvement in validation loss to continue training.')
     parser.add_argument('--batch_size', type=int, default=64,
@@ -123,6 +124,7 @@ def main() -> None:
         project="LLM_Nav",
         config = {
             "num_epochs": args.num_epochs,
+            "patience": args.patience,
             "batch_size": args.batch_size,
             "num_workers": args.num_workers,
             "optimizer": args.optimizer,
@@ -175,6 +177,7 @@ def main() -> None:
     min_gamma = config.min_gamma
 
     # Initialize the dataset
+    # TODO: Update with your Training Environments
     höngg_data = MapDataset(data_root='TrainingData/Hönggerberg', random_goals=True)
     seealpsee_data = MapDataset(data_root='TrainingData/seealpsee', random_goals=True)
     in2out1_data = MapDataset(data_root='TrainingData/in-to-out-1', random_goals=True)
@@ -226,7 +229,7 @@ def main() -> None:
 
     # Initialize variables for checkpointing and early stopping
     best_val_loss = float('inf')
-    patience =10
+    patience = config.patience
     trigger_times = 0
 
     # Training loop

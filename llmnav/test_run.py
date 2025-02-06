@@ -41,16 +41,18 @@ def main() -> None:
     Returns:
         None
     """
+
+    #TODO: Update data_root to the correct path
     data_root = 'TrainingData/Important'
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    # 1) Create dataset
     dataset = MapDataset(
         data_root=data_root,
         device=device
     )
 
-    snippet_indices = range(190, 194)
+    # TODO: Update snippet_indices to the desired range of snippets to visualize
+    snippet_indices = range(200, 264)
     
     subset_dataset = Subset(dataset, snippet_indices)
 
@@ -71,6 +73,7 @@ def main() -> None:
     model.eval()
 
     # Optional: Load iPlanner model (commented out)
+    # TODO: You havte to change the frame = 'LLMNav' to frame = 'iPlanner' in the plotting functions
     # iplanner_model = iPlannerPlannerNet(16, 5).to(device)
     # iplanner_model_path = "checkpoints/iplanner.pt"
     # iplanner_checkpoint_tuple = torch.load(iplanner_model_path, map_location=device)

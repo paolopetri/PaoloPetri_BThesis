@@ -27,7 +27,7 @@ model = model.to(DEVICE).eval()
 
 # Directories
 input_folder = 'camera'
-output_folder = 'depth'
+output_folder = 'depth_images'
 
 # Create the output directory if it doesn't exist
 if not os.path.exists(output_folder):
